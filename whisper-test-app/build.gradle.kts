@@ -2,6 +2,13 @@ plugins {
     alias(libs.plugins.android.application)
 }
 
+
+val sherpaOnnxAar =
+    file(
+        System.getenv("SURVEYCORE_SHERPA_AAR")
+            ?: "${System.getProperty("user.home")}/.cache/surveycore/libs/sherpa-onnx-1.13.4.aar"
+    )
+
 android {
     namespace = "com.negi.whispertest"
 
@@ -44,6 +51,7 @@ android {
 
 dependencies {
     implementation(project(":asr-whispercpp"))
+    implementation(files(sherpaOnnxAar))
 
     implementation(
         "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0"

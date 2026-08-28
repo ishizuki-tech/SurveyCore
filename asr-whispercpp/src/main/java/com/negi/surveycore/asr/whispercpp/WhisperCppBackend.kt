@@ -205,8 +205,7 @@ class WhisperCppBackend(
 
     companion object {
 
-        const val DEFAULT_THREAD_COUNT =
-            4
+        const val DEFAULT_THREAD_COUNT = 4
 
         fun nativeInfo(): String =
             WhisperCppNative.nativeInfo()

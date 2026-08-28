@@ -3,9 +3,16 @@ package com.negi.whispertest
 import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.Gravity
+import android.view.View
+import android.view.WindowInsets
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -14,6 +21,7 @@ import com.negi.surveycore.asr.Pcm16WavDecoder
 import com.negi.surveycore.asr.TranscriptionResult
 import com.negi.surveycore.asr.whispercpp.WhisperCppBackend
 import java.io.File
+import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -35,23 +43,65 @@ class WhisperTestActivity : Activity() {
     private lateinit var wavButton: Button
     private lateinit var benchmarkButton: Button
     private lateinit var recordButton: Button
+    private lateinit var liveButton: Button
+    private lateinit var sherpa20mButton: Button
+    private lateinit var sherpaBetterButton: Button
 
     private var backend: WhisperCppBackend? = null
+    private var livePartialBackend: WhisperCppBackend? = null
     private var recorder: MicrophoneRecorder? = null
     private var recordingJob: Job? = null
+    private var liveController: LiveTranscriptionController? = null
+    private var sherpaController: SherpaStreamingController? = null
+    private var sherpaPreparedProfile: SherpaProfile? = null
+    private var sherpaPreloadJob: Job? = null
+    private var whisperInitializationStarted = false
+    private var pendingMicrophoneAction: MicrophoneAction? = null
     private var backendReady = false
+    private var livePartialBackendReady = false
+    private var sherpa20mModelReady = false
+    private var sherpaBetterModelReady = false
+    private var activeSherpaProfile: SherpaProfile? = null
+
+    private val partialTranscriptMerger = LivePartialTranscriptMerger()
+    private val finalLiveTranscript = StringBuilder()
+    private var currentPartialTranscript: String = ""
+    private var activeLiveUtteranceId: Long? = null
+    private var liveStateLabel: String = "IDLE"
+    private var liveRms: Float = 0.0f
+    private var liveThreshold: Float = 0.0f
+    private var liveInferenceLine: String = ""
+
+    private val sherpaFinalTranscript = StringBuilder()
+    private var sherpaPartialTranscript: String = ""
+    private var sherpaRms: Float = 0.0f
+    private var sherpaSpeechThreshold: Float = 0.0f
+    private var sherpaFirstPartialLatencyMs: Long? = null
+    private var sherpaHadError: Boolean = false
+    private var sherpaAudioChunkMs: Int = 0
+    private var sherpaThreadCount: Int = 0
+    private var sherpaEndpointTrailingSilenceSeconds: Float = 0.0f
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        configureSystemBars()
         setContentView(buildContentView())
-        initializeBackend()
+        initializeSherpaStreamingAvailability()
     }
 
     override fun onDestroy() {
+        sherpaPreloadJob?.cancel()
+        sherpaPreloadJob = null
+        sherpaController?.close()
+        sherpaController = null
+        liveController?.close()
+        liveController = null
         recorder?.requestStop()
         recorder = null
         recordingJob?.cancel()
         recordingJob = null
+        livePartialBackend?.close()
+        livePartialBackend = null
         backend?.close()
         backend = null
         scope.cancel()
@@ -69,40 +119,108 @@ class WhisperTestActivity : Activity() {
             return
         }
 
+        val action = pendingMicrophoneAction
+        pendingMicrophoneAction = null
+
         if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-            startRecording()
+            when (action) {
+                MicrophoneAction.BATCH -> startRecording()
+                MicrophoneAction.LIVE -> startLiveTranscription()
+                MicrophoneAction.SHERPA_20M -> startSherpaStreaming(SherpaProfile.FAST_20M)
+                MicrophoneAction.SHERPA_BETTER -> startSherpaStreaming(SherpaProfile.BETTER_2023_06_26)
+                null -> Unit
+            }
         } else {
             setStatus("Microphone permission denied.")
         }
     }
 
+    @Suppress("DEPRECATION")
+    private fun configureSystemBars() {
+        window.decorView.setBackgroundColor(COLOR_PAGE_BACKGROUND)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(false)
+
+            val appearance =
+                android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+                    android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+
+            window.insetsController?.setSystemBarsAppearance(
+                appearance,
+                appearance,
+            )
+        } else {
+            window.decorView.systemUiVisibility =
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+                    View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+                    View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
+                    View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        }
+    }
+
     private fun buildContentView(): ScrollView {
-        val padding = (24 * resources.displayMetrics.density).toInt()
+        val pagePadding = dp(20)
+        val sectionGap = dp(18)
+        val itemGap = dp(10)
 
         val container =
             LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER_HORIZONTAL
-                setPadding(padding, padding, padding, padding)
+                setPadding(pagePadding, dp(22), pagePadding, dp(32))
+                setBackgroundColor(COLOR_PAGE_BACKGROUND)
+            }
+
+        val header =
+            LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(4), 0, dp(4), 0)
             }
 
         val titleView =
             TextView(this).apply {
-                text = "Whisper Test"
-                textSize = 28f
+                text = "ASR Playground"
+                textSize = 30f
+                setTextColor(COLOR_TEXT_PRIMARY)
+                setTypeface(typeface, Typeface.BOLD)
             }
 
         val subtitleView =
             TextView(this).apply {
-                text = "Standalone English whisper.cpp ASR"
-                textSize = 17f
-                setPadding(0, padding / 2, 0, padding)
+                text = "Offline speech recognition lab"
+                textSize = 15f
+                setTextColor(COLOR_TEXT_SECONDARY)
+                setPadding(0, dp(4), 0, dp(12))
             }
+
+        val capabilityRow =
+            LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+            }
+
+        capabilityRow.addView(makeChip("OFFLINE"))
+        capabilityRow.addView(makeChip("ENGLISH").withStartMargin(dp(8)))
+        capabilityRow.addView(makeChip("16 kHz").withStartMargin(dp(8)))
+
+        header.addView(titleView)
+        header.addView(subtitleView)
+        header.addView(capabilityRow)
 
         statusView =
             TextView(this).apply {
-                text = "Initializing ggml-base.en.bin..."
-                textSize = 18f
+                text = "Preparing ASR runtimes..."
+                textSize = 16f
+                setTextColor(COLOR_TEXT_PRIMARY)
+                setLineSpacing(0f, 1.12f)
+                setPadding(dp(16), dp(16), dp(16), dp(16))
+                background =
+                    roundedBackground(
+                        color = COLOR_STATUS_BACKGROUND,
+                        radiusDp = 18,
+                        strokeColor = COLOR_STATUS_BORDER,
+                    )
             }
 
         wavButton =
@@ -110,13 +228,15 @@ class WhisperTestActivity : Activity() {
                 text = "Run bundled WAV test"
                 isEnabled = false
                 setOnClickListener { runBundledWavTest() }
+                styleActionButton(primary = false)
             }
 
         benchmarkButton =
             Button(this).apply {
-                text = "Run 5x benchmark"
+                text = "Run 5× benchmark"
                 isEnabled = false
                 setOnClickListener { runBundledWavBenchmark() }
+                styleActionButton(primary = false)
             }
 
         recordButton =
@@ -130,42 +250,416 @@ class WhisperTestActivity : Activity() {
                         stopRecording()
                     }
                 }
+                styleActionButton(primary = false)
+            }
+
+        liveButton =
+            Button(this).apply {
+                text = "Start Whisper live transcription"
+                isEnabled = false
+                setOnClickListener {
+                    if (liveController == null) {
+                        ensureLiveMicrophonePermissionAndStart()
+                    } else {
+                        stopLiveTranscription()
+                    }
+                }
+                styleActionButton(primary = false)
+            }
+
+        sherpa20mButton =
+            Button(this).apply {
+                text = SherpaProfile.FAST_20M.startButtonText
+                isEnabled = false
+                setOnClickListener {
+                    if (activeSherpaProfile == null) {
+                        ensureSherpaMicrophonePermissionAndStart(SherpaProfile.FAST_20M)
+                    } else if (activeSherpaProfile == SherpaProfile.FAST_20M) {
+                        stopSherpaStreaming()
+                    }
+                }
+                styleActionButton(primary = false)
+            }
+
+        sherpaBetterButton =
+            Button(this).apply {
+                text = SherpaProfile.BETTER_2023_06_26.startButtonText
+                isEnabled = false
+                setOnClickListener {
+                    if (activeSherpaProfile == null) {
+                        ensureSherpaMicrophonePermissionAndStart(SherpaProfile.BETTER_2023_06_26)
+                    } else if (activeSherpaProfile == SherpaProfile.BETTER_2023_06_26) {
+                        stopSherpaStreaming()
+                    }
+                }
+                styleActionButton(primary = true)
             }
 
         transcriptView =
             TextView(this).apply {
                 text = "Transcript will appear here."
                 textSize = 20f
-                setPadding(0, padding, 0, padding)
+                setTextColor(COLOR_TEXT_PRIMARY)
+                setLineSpacing(0f, 1.15f)
+                minHeight = dp(140)
+                setPadding(dp(16), dp(16), dp(16), dp(16))
+                background =
+                    roundedBackground(
+                        color = COLOR_CARD_BACKGROUND,
+                        radiusDp = 18,
+                        strokeColor = COLOR_CARD_BORDER,
+                    )
             }
 
         nativeView =
             TextView(this).apply {
-                text = "native: waiting"
-                textSize = 14f
+                text = "Runtime information will appear here."
+                textSize = 12f
+                setTextColor(COLOR_TEXT_TERTIARY)
+                setTypeface(Typeface.MONOSPACE)
+                setLineSpacing(0f, 1.08f)
+                setPadding(dp(14), dp(14), dp(14), dp(14))
+                background =
+                    roundedBackground(
+                        color = COLOR_RUNTIME_BACKGROUND,
+                        radiusDp = 14,
+                    )
             }
 
-        container.addView(titleView)
-        container.addView(subtitleView)
-        container.addView(statusView)
-        container.addView(wavButton)
-        container.addView(benchmarkButton)
-        container.addView(recordButton)
-        container.addView(transcriptView)
-        container.addView(nativeView)
+        container.addView(header, matchWidthParams())
+
+        addVerticalSpace(container, sectionGap)
+        container.addView(makeSectionLabel("STATUS"), matchWidthParams())
+        addVerticalSpace(container, dp(8))
+        container.addView(statusView, matchWidthParams())
+
+        addVerticalSpace(container, sectionGap)
+        container.addView(makeSectionLabel("STREAMING"), matchWidthParams())
+        addVerticalSpace(container, dp(8))
+        container.addView(sherpaBetterButton, matchWidthParams())
+        addVerticalSpace(container, itemGap)
+        container.addView(sherpa20mButton, matchWidthParams())
+
+        addVerticalSpace(container, sectionGap)
+        container.addView(makeSectionLabel("WHISPER TOOLS"), matchWidthParams())
+        addVerticalSpace(container, dp(8))
+        container.addView(recordButton, matchWidthParams())
+        addVerticalSpace(container, itemGap)
+        container.addView(liveButton, matchWidthParams())
+        addVerticalSpace(container, itemGap)
+        container.addView(wavButton, matchWidthParams())
+        addVerticalSpace(container, itemGap)
+        container.addView(benchmarkButton, matchWidthParams())
+
+        addVerticalSpace(container, sectionGap)
+        container.addView(makeSectionLabel("TRANSCRIPT"), matchWidthParams())
+        addVerticalSpace(container, dp(8))
+        container.addView(transcriptView, matchWidthParams())
+
+        addVerticalSpace(container, sectionGap)
+        container.addView(makeSectionLabel("RUNTIME & MODELS"), matchWidthParams())
+        addVerticalSpace(container, dp(8))
+        container.addView(nativeView, matchWidthParams())
 
         return ScrollView(this).apply {
+            setBackgroundColor(COLOR_PAGE_BACKGROUND)
+            isFillViewport = true
+            clipToPadding = false
             addView(container)
+
+            setOnApplyWindowInsetsListener { view, insets ->
+                val topInset: Int
+                val bottomInset: Int
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val systemBars =
+                        insets.getInsets(WindowInsets.Type.systemBars())
+                    topInset = systemBars.top
+                    bottomInset = systemBars.bottom
+                } else {
+                    @Suppress("DEPRECATION")
+                    topInset = insets.systemWindowInsetTop
+                    @Suppress("DEPRECATION")
+                    bottomInset = insets.systemWindowInsetBottom
+                }
+
+                view.setPadding(
+                    0,
+                    topInset,
+                    0,
+                    bottomInset,
+                )
+                insets
+            }
         }
     }
 
-    private fun initializeBackend() {
-        scope.launch {
-            val modelFile = File(filesDir, MODEL_RELATIVE_PATH)
+    private fun makeSectionLabel(text: String): TextView =
+        TextView(this).apply {
+            this.text = text
+            textSize = 12f
+            setTextColor(COLOR_TEXT_TERTIARY)
+            setTypeface(typeface, Typeface.BOLD)
+            letterSpacing = 0.08f
+        }
 
-            if (!modelFile.isFile) {
+    private fun makeChip(text: String): TextView =
+        TextView(this).apply {
+            this.text = text
+            textSize = 11f
+            setTextColor(COLOR_ACCENT)
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            background =
+                roundedBackground(
+                    color = COLOR_CHIP_BACKGROUND,
+                    radiusDp = 999,
+                )
+        }
+
+    private fun View.withStartMargin(margin: Int): View =
+        apply {
+            layoutParams =
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    marginStart = margin
+                }
+        }
+
+    private fun Button.styleActionButton(primary: Boolean) {
+        isAllCaps = false
+        textSize = 16f
+        setTypeface(typeface, Typeface.BOLD)
+        minHeight = dp(56)
+        setPadding(dp(16), dp(10), dp(16), dp(10))
+
+        if (primary) {
+            backgroundTintList =
+                ColorStateList(
+                    arrayOf(
+                        intArrayOf(-android.R.attr.state_enabled),
+                        intArrayOf(),
+                    ),
+                    intArrayOf(
+                        COLOR_BUTTON_DISABLED,
+                        COLOR_ACCENT,
+                    ),
+                )
+            setTextColor(Color.WHITE)
+        } else {
+            backgroundTintList =
+                ColorStateList(
+                    arrayOf(
+                        intArrayOf(-android.R.attr.state_enabled),
+                        intArrayOf(),
+                    ),
+                    intArrayOf(
+                        COLOR_BUTTON_DISABLED,
+                        COLOR_BUTTON_SECONDARY,
+                    ),
+                )
+            setTextColor(COLOR_TEXT_PRIMARY)
+        }
+    }
+
+    private fun roundedBackground(
+        color: Int,
+        radiusDp: Int,
+        strokeColor: Int? = null,
+    ): GradientDrawable =
+        GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(color)
+            cornerRadius = dp(radiusDp).toFloat()
+            if (strokeColor != null) {
+                setStroke(dp(1), strokeColor)
+            }
+        }
+
+    private fun matchWidthParams(): LinearLayout.LayoutParams =
+        LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        )
+
+    private fun addVerticalSpace(
+        container: LinearLayout,
+        height: Int,
+    ) {
+        container.addView(
+            View(this),
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                height,
+            ),
+        )
+    }
+
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density + 0.5f).toInt()
+
+    private fun initializeSherpaStreamingAvailability() {
+        sherpa20mModelReady = isSherpaModelReady(SherpaProfile.FAST_20M)
+        sherpaBetterModelReady = isSherpaModelReady(SherpaProfile.BETTER_2023_06_26)
+
+        resetSherpaButtonLabels()
+        setSherpaButtonsEnabled(true)
+        renderRuntimeInfo()
+
+        if (sherpaBetterModelReady) {
+            preloadPreferredSherpaProfile()
+        } else {
+            initializeBackend()
+        }
+    }
+
+    private fun preloadPreferredSherpaProfile() {
+        val profile = SherpaProfile.BETTER_2023_06_26
+        if (!isSherpaProfileReady(profile)) {
+            return
+        }
+
+        sherpaPreloadJob?.cancel()
+
+        val controller = createSherpaController(profile)
+        sherpaController?.close()
+        sherpaController = controller
+        sherpaPreparedProfile = profile
+
+        sherpaAudioChunkMs = controller.audioChunkMs
+        sherpaThreadCount = controller.threadCount
+        sherpaEndpointTrailingSilenceSeconds =
+            controller.endpointTrailingSilenceSeconds
+
+        sherpaBetterButton.text = "Preparing Sherpa Better English..."
+        sherpaBetterButton.isEnabled = false
+        setStatus(
+            "PREPARING SHERPA\n" +
+                "model: ${profile.displayName}\n" +
+                "${controller.audioChunkMs} ms stateful chunks | CPU | " +
+                "${controller.threadCount} threads\n" +
+                "warming decoder before first microphone session"
+        )
+
+        sherpaPreloadJob =
+            scope.launch {
+                try {
+                    val preloadStartNs = System.nanoTime()
+
+                    withContext(Dispatchers.IO) {
+                        controller.preload()
+                    }
+
+                    val preloadSeconds = elapsedSeconds(preloadStartNs)
+
+                    if (
+                        sherpaController === controller &&
+                        activeSherpaProfile == null
+                    ) {
+                        sherpaBetterButton.text = profile.startButtonText
+                        sherpaBetterButton.isEnabled = true
+                        renderRuntimeInfo()
+                        setStatus(
+                            "SHERPA READY\n" +
+                                "model: ${profile.displayName}\n" +
+                                "${controller.audioChunkMs} ms stateful chunks | CPU | " +
+                                "${controller.threadCount} threads\n" +
+                                "preload + warm-up: ${formatSeconds(preloadSeconds)} sec\n" +
+                                "initializing Whisper models in background..."
+                        )
+                        Log.d(
+                            LOG_TAG,
+                            "Sherpa preload + warm-up ready in " +
+                                "${formatSeconds(preloadSeconds)} sec; " +
+                                "model=${profile.displayName}; threads=${controller.threadCount}",
+                        )
+                    }
+                } catch (throwable: Throwable) {
+                    Log.e(LOG_TAG, "Sherpa preload failed.", throwable)
+
+                    if (sherpaController === controller) {
+                        controller.close()
+                        sherpaController = null
+                        sherpaPreparedProfile = null
+                        sherpaBetterButton.text = "Sherpa preload failed"
+                        sherpaBetterButton.isEnabled = false
+                    }
+                } finally {
+                    sherpaPreloadJob = null
+                    initializeBackend()
+                }
+            }
+    }
+
+    private fun createSherpaController(
+        profile: SherpaProfile,
+    ): SherpaStreamingController =
+        SherpaStreamingController(
+            context = this,
+            modelDir = File(filesDir, profile.modelRelativePath),
+            modelSpec = profile.modelSpec,
+        )
+
+    private fun isSherpaModelReady(profile: SherpaProfile): Boolean {
+        val modelDir = File(filesDir, profile.modelRelativePath)
+        return profile.modelSpec.requiredFiles.all { name ->
+            File(modelDir, name).let { file ->
+                file.isFile && file.length() > 0L
+            }
+        }
+    }
+
+    private fun isSherpaProfileReady(profile: SherpaProfile): Boolean =
+        when (profile) {
+            SherpaProfile.FAST_20M -> sherpa20mModelReady
+            SherpaProfile.BETTER_2023_06_26 -> sherpaBetterModelReady
+        }
+
+    private fun sherpaButtonFor(profile: SherpaProfile): Button =
+        when (profile) {
+            SherpaProfile.FAST_20M -> sherpa20mButton
+            SherpaProfile.BETTER_2023_06_26 -> sherpaBetterButton
+        }
+
+    private fun setSherpaButtonsEnabled(enabled: Boolean) {
+        sherpa20mButton.isEnabled = enabled && sherpa20mModelReady
+        sherpaBetterButton.isEnabled =
+            enabled &&
+                sherpaBetterModelReady &&
+                (sherpaPreloadJob == null || sherpaPreparedProfile != SherpaProfile.BETTER_2023_06_26)
+    }
+
+    private fun resetSherpaButtonLabels() {
+        sherpa20mButton.text =
+            if (sherpa20mModelReady) {
+                SherpaProfile.FAST_20M.startButtonText
+            } else {
+                "Sherpa 20M model not installed"
+            }
+
+        sherpaBetterButton.text =
+            if (sherpaBetterModelReady) {
+                SherpaProfile.BETTER_2023_06_26.startButtonText
+            } else {
+                "Sherpa Better model not installed"
+            }
+    }
+
+    private fun initializeBackend() {
+        if (whisperInitializationStarted) {
+            return
+        }
+        whisperInitializationStarted = true
+
+        scope.launch {
+            val finalModelFile = File(filesDir, FINAL_MODEL_RELATIVE_PATH)
+            val partialModelFile = File(filesDir, LIVE_PARTIAL_MODEL_RELATIVE_PATH)
+
+            if (!finalModelFile.isFile) {
                 setStatus(
-                    "MODEL NOT FOUND\n${modelFile.absolutePath}\n\n" +
+                    "FINAL MODEL NOT FOUND\n${finalModelFile.absolutePath}\n\n" +
                         "Install the model with:\n" +
                         "./scripts/install_whisper_base_en_test_app.sh"
                 )
@@ -173,30 +667,66 @@ class WhisperTestActivity : Activity() {
             }
 
             try {
-                val runtimeBackend =
+                val finalRuntimeBackend =
                     WhisperCppBackend(
-                        modelPath = modelFile.absolutePath,
+                        modelPath = finalModelFile.absolutePath,
                         threadCount = THREAD_COUNT,
                     )
 
-                backend = runtimeBackend
+                backend = finalRuntimeBackend
 
-                val initializeStart = System.nanoTime()
-                runtimeBackend.initialize()
+                val finalInitializeStart = System.nanoTime()
+                withContext(Dispatchers.IO) {
+                    finalRuntimeBackend.initialize()
+                }
+                val finalInitializeSeconds = elapsedSeconds(finalInitializeStart)
 
                 backendReady = true
                 wavButton.isEnabled = true
                 benchmarkButton.isEnabled = true
                 recordButton.isEnabled = true
 
-                setStatus(
-                    "READY\n" +
-                        "backend: ${runtimeBackend.backendId}\n" +
-                        "model: ${modelFile.name}\n" +
-                        "initialize: ${formatSeconds(elapsedSeconds(initializeStart))} sec"
-                )
+                if (partialModelFile.isFile) {
+                    val partialRuntimeBackend =
+                        WhisperCppBackend(
+                            modelPath = partialModelFile.absolutePath,
+                            threadCount = THREAD_COUNT,
+                        )
 
-                nativeView.text = "native:\n${WhisperCppBackend.nativeInfo()}"
+                    livePartialBackend = partialRuntimeBackend
+
+                    val partialInitializeStart = System.nanoTime()
+                    withContext(Dispatchers.IO) {
+                        partialRuntimeBackend.initialize()
+                    }
+                    val partialInitializeSeconds = elapsedSeconds(partialInitializeStart)
+
+                    livePartialBackendReady = true
+                    liveButton.isEnabled = true
+
+                    setStatus(
+                        "READY\n" +
+                            "live partial: ${partialModelFile.name} " +
+                            "(${formatSeconds(partialInitializeSeconds)} sec init)\n" +
+                            "final/batch: ${finalModelFile.name} " +
+                            "(${formatSeconds(finalInitializeSeconds)} sec init)"
+                    )
+                } else {
+                    livePartialBackendReady = false
+                    liveButton.isEnabled = false
+
+                    setStatus(
+                        "READY FOR BATCH / FINAL\n" +
+                            "model: ${finalModelFile.name}\n" +
+                            "initialize: ${formatSeconds(finalInitializeSeconds)} sec\n\n" +
+                            "LIVE PARTIAL MODEL NOT FOUND\n" +
+                            "${partialModelFile.absolutePath}\n" +
+                            "Install with:\n" +
+                            "./scripts/install_whisper_tiny_en_test_app.sh"
+                    )
+                }
+
+                renderRuntimeInfo()
             } catch (throwable: Throwable) {
                 Log.e(LOG_TAG, "Whisper initialization failed.", throwable)
                 showError("Initialization error", throwable)
@@ -205,13 +735,15 @@ class WhisperTestActivity : Activity() {
     }
 
     private fun runBundledWavTest() {
-        if (!backendReady || recordingJob != null) {
+        if (!backendReady || recordingJob != null || liveController != null || activeSherpaProfile != null) {
             return
         }
 
         wavButton.isEnabled = false
         benchmarkButton.isEnabled = false
         recordButton.isEnabled = false
+        liveButton.isEnabled = false
+        setSherpaButtonsEnabled(false)
         transcriptView.text = "Running bundled WAV..."
         setStatus("TRANSCRIBING BUNDLED WAV")
 
@@ -238,18 +770,22 @@ class WhisperTestActivity : Activity() {
                 wavButton.isEnabled = backendReady
                 benchmarkButton.isEnabled = backendReady
                 recordButton.isEnabled = backendReady
+                liveButton.isEnabled = backendReady && livePartialBackendReady
+                setSherpaButtonsEnabled(true)
             }
         }
     }
 
     private fun runBundledWavBenchmark() {
-        if (!backendReady || recordingJob != null) {
+        if (!backendReady || recordingJob != null || liveController != null || activeSherpaProfile != null) {
             return
         }
 
         wavButton.isEnabled = false
         benchmarkButton.isEnabled = false
         recordButton.isEnabled = false
+        liveButton.isEnabled = false
+        setSherpaButtonsEnabled(false)
         transcriptView.text = "Benchmark running..."
 
         scope.launch {
@@ -288,6 +824,8 @@ class WhisperTestActivity : Activity() {
                 wavButton.isEnabled = backendReady
                 benchmarkButton.isEnabled = backendReady
                 recordButton.isEnabled = backendReady
+                liveButton.isEnabled = backendReady && livePartialBackendReady
+                setSherpaButtonsEnabled(true)
             }
         }
     }
@@ -335,15 +873,48 @@ class WhisperTestActivity : Activity() {
     }
 
     private fun ensureMicrophonePermissionAndStart() {
-        if (!backendReady) {
-            return
+        ensureMicrophonePermission(MicrophoneAction.BATCH)
+    }
+
+    private fun ensureLiveMicrophonePermissionAndStart() {
+        ensureMicrophonePermission(MicrophoneAction.LIVE)
+    }
+
+    private fun ensureSherpaMicrophonePermissionAndStart(profile: SherpaProfile) {
+        val action =
+            when (profile) {
+                SherpaProfile.FAST_20M -> MicrophoneAction.SHERPA_20M
+                SherpaProfile.BETTER_2023_06_26 -> MicrophoneAction.SHERPA_BETTER
+            }
+        ensureMicrophonePermission(action)
+    }
+
+    private fun ensureMicrophonePermission(action: MicrophoneAction) {
+        when (action) {
+            MicrophoneAction.SHERPA_20M -> {
+                if (!sherpa20mModelReady) return
+            }
+
+            MicrophoneAction.SHERPA_BETTER -> {
+                if (!sherpaBetterModelReady) return
+            }
+
+            else -> {
+                if (!backendReady) return
+            }
         }
 
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            startRecording()
+            when (action) {
+                MicrophoneAction.BATCH -> startRecording()
+                MicrophoneAction.LIVE -> startLiveTranscription()
+                MicrophoneAction.SHERPA_20M -> startSherpaStreaming(SherpaProfile.FAST_20M)
+                MicrophoneAction.SHERPA_BETTER -> startSherpaStreaming(SherpaProfile.BETTER_2023_06_26)
+            }
             return
         }
 
+        pendingMicrophoneAction = action
         requestPermissions(
             arrayOf(Manifest.permission.RECORD_AUDIO),
             MICROPHONE_PERMISSION_REQUEST,
@@ -351,7 +922,7 @@ class WhisperTestActivity : Activity() {
     }
 
     private fun startRecording() {
-        if (recordingJob != null || !backendReady) {
+        if (recordingJob != null || liveController != null || activeSherpaProfile != null || !backendReady) {
             return
         }
 
@@ -363,6 +934,8 @@ class WhisperTestActivity : Activity() {
         recorder = microphoneRecorder
         wavButton.isEnabled = false
         benchmarkButton.isEnabled = false
+        liveButton.isEnabled = false
+        setSherpaButtonsEnabled(false)
         recordButton.text = "Stop and transcribe"
         transcriptView.text = "Listening..."
         setStatus("RECORDING\n16 kHz mono PCM16\nMaximum $MAX_RECORDING_SECONDS sec")
@@ -398,10 +971,488 @@ class WhisperTestActivity : Activity() {
                     recordButton.isEnabled = backendReady
                     wavButton.isEnabled = backendReady
                     benchmarkButton.isEnabled = backendReady
+                    liveButton.isEnabled = backendReady && livePartialBackendReady
+                    setSherpaButtonsEnabled(true)
                 }
             }
 
         recordingJob = job
+    }
+
+    private fun startLiveTranscription() {
+        if (
+            liveController != null ||
+            activeSherpaProfile != null ||
+            recordingJob != null ||
+            !backendReady ||
+            !livePartialBackendReady
+        ) {
+            return
+        }
+
+        val finalRuntimeBackend =
+            checkNotNull(backend) {
+                "Final Whisper backend is unavailable."
+            }
+
+        val partialRuntimeBackend =
+            checkNotNull(livePartialBackend) {
+                "Live partial Whisper backend is unavailable."
+            }
+
+        finalLiveTranscript.clear()
+        partialTranscriptMerger.reset()
+        currentPartialTranscript = ""
+        activeLiveUtteranceId = null
+        liveStateLabel = "LIVE LISTENING"
+        liveRms = 0.0f
+        liveThreshold = 0.0f
+        liveInferenceLine = ""
+        transcriptView.text = "Listening for speech..."
+
+        wavButton.isEnabled = false
+        benchmarkButton.isEnabled = false
+        recordButton.isEnabled = false
+        setSherpaButtonsEnabled(false)
+        liveButton.text = "Stop Whisper live transcription"
+        liveButton.isEnabled = true
+
+        val controller =
+            LiveTranscriptionController(
+                partialBackend = partialRuntimeBackend,
+                finalBackend = finalRuntimeBackend,
+                scope = scope,
+                listener =
+                    object : LiveTranscriptionController.Listener {
+                        override fun onListening() {
+                            runOnUiThread {
+                                liveStateLabel = "LIVE LISTENING"
+                                renderLiveStatus()
+                            }
+                        }
+
+                        override fun onVoiceLevel(
+                            rms: Float,
+                            threshold: Float,
+                            speechActive: Boolean,
+                        ) {
+                            runOnUiThread {
+                                liveRms = rms
+                                liveThreshold = threshold
+                                if (!speechActive && liveStateLabel != "FINAL READY") {
+                                    liveStateLabel = "LIVE LISTENING"
+                                }
+                                renderLiveStatus()
+                            }
+                        }
+
+                        override fun onSpeechStarted(utteranceId: Long) {
+                            runOnUiThread {
+                                activeLiveUtteranceId = utteranceId
+                                partialTranscriptMerger.startUtterance(utteranceId)
+                                currentPartialTranscript = ""
+                                liveStateLabel = "SPEECH DETECTED #$utteranceId"
+                                liveInferenceLine = "capturing 16 kHz mono PCM16"
+                                renderLiveTranscript()
+                                renderLiveStatus()
+                            }
+                        }
+
+                        override fun onSpeechEnded(utteranceId: Long) {
+                            runOnUiThread {
+                                liveStateLabel = "FINALIZING #$utteranceId"
+                                renderLiveStatus()
+                            }
+                        }
+
+                        override fun onPartial(
+                            utteranceId: Long,
+                            result: TranscriptionResult,
+                        ) {
+                            runOnUiThread {
+                                if (activeLiveUtteranceId == utteranceId) {
+                                    currentPartialTranscript =
+                                        partialTranscriptMerger.mergePartial(
+                                            utteranceId = utteranceId,
+                                            incomingText = result.text,
+                                        )
+                                    liveStateLabel = "PARTIAL #$utteranceId"
+                                    liveInferenceLine =
+                                        "audio ${formatSeconds(result.audioDurationMs / 1000.0)} sec | " +
+                                            "inference ${formatSeconds(result.inferenceDurationMs / 1000.0)} sec | " +
+                                            "RTF ${formatRtf(result.realtimeFactor)}"
+                                    renderLiveTranscript()
+                                    renderLiveStatus()
+                                } else {
+                                    Log.d(
+                                        LOG_TAG,
+                                        "Ignoring stale partial for utterance=$utteranceId; " +
+                                            "active=$activeLiveUtteranceId",
+                                    )
+                                }
+                            }
+                        }
+
+                        override fun onFinal(
+                            utteranceId: Long,
+                            result: TranscriptionResult,
+                        ) {
+                            runOnUiThread {
+                                val text =
+                                    partialTranscriptMerger.finalizeUtterance(
+                                        utteranceId = utteranceId,
+                                        finalText = result.text,
+                                    )
+                                if (text.isNotEmpty()) {
+                                    if (finalLiveTranscript.isNotEmpty()) {
+                                        finalLiveTranscript.append('\n')
+                                    }
+                                    finalLiveTranscript.append(text)
+                                }
+
+                                if (activeLiveUtteranceId == utteranceId) {
+                                    currentPartialTranscript = ""
+                                    activeLiveUtteranceId = null
+                                }
+
+                                liveStateLabel = "FINAL READY #$utteranceId — LISTENING"
+                                liveInferenceLine =
+                                    "audio ${formatSeconds(result.audioDurationMs / 1000.0)} sec | " +
+                                        "inference ${formatSeconds(result.inferenceDurationMs / 1000.0)} sec | " +
+                                        "RTF ${formatRtf(result.realtimeFactor)}"
+                                renderLiveTranscript()
+                                renderLiveStatus()
+
+                                Log.d(
+                                    LOG_TAG,
+                                    "liveFinal utterance=$utteranceId; " +
+                                        "audioMs=${result.audioDurationMs}; " +
+                                        "inferenceMs=${result.inferenceDurationMs}; " +
+                                        "rtf=${formatRtf(result.realtimeFactor)}; " +
+                                        "text='${result.text.replace("\n", "\\n")}'",
+                                )
+                            }
+                        }
+
+                        override fun onError(throwable: Throwable) {
+                            Log.e(LOG_TAG, "Live transcription error.", throwable)
+                            runOnUiThread {
+                                liveStateLabel = "LIVE ERROR"
+                                liveInferenceLine =
+                                    "${throwable::class.java.simpleName}: " +
+                                        (throwable.message ?: "Unknown error")
+                                renderLiveStatus()
+                            }
+                        }
+
+                        override fun onStopped() {
+                            runOnUiThread {
+                                liveController = null
+                                activeLiveUtteranceId = null
+                                partialTranscriptMerger.reset()
+                                liveStateLabel = "LIVE STOPPED"
+                                liveInferenceLine = ""
+                                liveButton.text = "Start Whisper live transcription"
+                                liveButton.isEnabled = backendReady && livePartialBackendReady
+                                setSherpaButtonsEnabled(true)
+                                wavButton.isEnabled = backendReady
+                                benchmarkButton.isEnabled = backendReady
+                                recordButton.isEnabled = backendReady
+                                renderLiveTranscript()
+                                renderLiveStatus()
+                            }
+                        }
+                    },
+            )
+
+        liveController = controller
+        renderLiveStatus()
+        controller.start()
+    }
+
+    private fun startSherpaStreaming(profile: SherpaProfile) {
+        if (
+            activeSherpaProfile != null ||
+            liveController != null ||
+            recordingJob != null ||
+            !isSherpaProfileReady(profile)
+        ) {
+            return
+        }
+
+        sherpaFinalTranscript.clear()
+        sherpaPartialTranscript = ""
+        sherpaRms = 0.0f
+        sherpaSpeechThreshold = 0.0f
+        sherpaFirstPartialLatencyMs = null
+        sherpaHadError = false
+        activeSherpaProfile = profile
+
+        wavButton.isEnabled = false
+        benchmarkButton.isEnabled = false
+        recordButton.isEnabled = false
+        liveButton.isEnabled = false
+        setSherpaButtonsEnabled(false)
+        sherpaButtonFor(profile).apply {
+            text = profile.stopButtonText
+            isEnabled = true
+        }
+        transcriptView.text = "Listening..."
+        renderSherpaStatus("SHERPA STARTING", profile)
+
+        val controller =
+            if (
+                sherpaController != null &&
+                sherpaPreparedProfile == profile
+            ) {
+                checkNotNull(sherpaController)
+            } else {
+                sherpaPreloadJob?.cancel()
+                sherpaPreloadJob = null
+                sherpaController?.close()
+
+                createSherpaController(profile).also { created ->
+                    sherpaController = created
+                    sherpaPreparedProfile = profile
+                }
+            }
+
+        controller.setListener(
+            object : SherpaStreamingController.Listener {
+                        override fun onStarted() {
+                            runOnUiThread {
+                                renderSherpaStatus("SHERPA STREAMING", profile)
+                            }
+                        }
+
+                        override fun onAudioLevel(
+                            rms: Float,
+                            speechThreshold: Float,
+                        ) {
+                            runOnUiThread {
+                                sherpaRms = rms
+                                sherpaSpeechThreshold = speechThreshold
+                                renderSherpaStatus("SHERPA STREAMING", profile)
+                            }
+                        }
+
+                        override fun onPartial(
+                            text: String,
+                            firstPartialLatencyMs: Long?,
+                        ) {
+                            runOnUiThread {
+                                sherpaPartialTranscript = normalizeSherpaDisplayText(text)
+                                if (firstPartialLatencyMs != null) {
+                                    sherpaFirstPartialLatencyMs = firstPartialLatencyMs
+                                }
+                                renderSherpaTranscript()
+                                renderSherpaStatus("SHERPA STREAMING", profile)
+                            }
+                        }
+
+                        override fun onFinal(text: String) {
+                            runOnUiThread {
+                                if (text.isNotBlank()) {
+                                    if (sherpaFinalTranscript.isNotEmpty()) {
+                                        sherpaFinalTranscript.append('\n')
+                                    }
+                                    sherpaFinalTranscript.append(normalizeSherpaDisplayText(text))
+                                }
+
+                                sherpaPartialTranscript = ""
+                                sherpaFirstPartialLatencyMs = null
+                                renderSherpaTranscript()
+                                renderSherpaStatus("SHERPA ENDPOINT — LISTENING", profile)
+                            }
+                        }
+
+                        override fun onError(throwable: Throwable) {
+                            Log.e(LOG_TAG, "Sherpa streaming error.", throwable)
+                            runOnUiThread {
+                                sherpaHadError = true
+                                showError("Sherpa streaming error", throwable)
+                            }
+                        }
+
+                        override fun onStopped() {
+                            runOnUiThread {
+                                activeSherpaProfile = null
+                                sherpaPartialTranscript = ""
+                                resetSherpaButtonLabels()
+                                setSherpaButtonsEnabled(true)
+                                wavButton.isEnabled = backendReady
+                                benchmarkButton.isEnabled = backendReady
+                                recordButton.isEnabled = backendReady
+                                liveButton.isEnabled = backendReady && livePartialBackendReady
+                                if (!sherpaHadError) {
+                                    renderSherpaStatus("SHERPA STOPPED", profile)
+                                }
+                            }
+                        }
+                    },
+        )
+
+        sherpaAudioChunkMs = controller.audioChunkMs
+        sherpaThreadCount = controller.threadCount
+        sherpaEndpointTrailingSilenceSeconds =
+            controller.endpointTrailingSilenceSeconds
+        sherpaController = controller
+
+        try {
+            controller.start()
+        } catch (throwable: Throwable) {
+            controller.close()
+            sherpaController = null
+            sherpaPreparedProfile = null
+            activeSherpaProfile = null
+            Log.e(LOG_TAG, "Failed to start Sherpa streaming.", throwable)
+            showError("Sherpa start error", throwable)
+            resetSherpaButtonLabels()
+            setSherpaButtonsEnabled(true)
+            wavButton.isEnabled = backendReady
+            benchmarkButton.isEnabled = backendReady
+            recordButton.isEnabled = backendReady
+            liveButton.isEnabled = backendReady && livePartialBackendReady
+        }
+    }
+
+    private fun stopSherpaStreaming() {
+        val controller = sherpaController ?: return
+        val profile = activeSherpaProfile ?: return
+
+        setSherpaButtonsEnabled(false)
+        sherpaButtonFor(profile).apply {
+            isEnabled = false
+            text = "Stopping ${profile.shortName}..."
+        }
+        renderSherpaStatus("SHERPA STOPPING", profile)
+        controller.requestStop()
+    }
+
+    private fun normalizeSherpaDisplayText(text: String): String {
+        val normalized = text.trim().replace(Regex("\\s+"), " ")
+        if (normalized.isEmpty()) {
+            return normalized
+        }
+
+        val letters = normalized.filter { it.isLetter() }
+        if (letters.isEmpty() || letters.any { it.isLowerCase() }) {
+            return normalized
+        }
+
+        val lower = normalized.lowercase(Locale.US)
+        return lower.replaceFirstChar { character ->
+            if (character.isLowerCase()) {
+                character.titlecase(Locale.US)
+            } else {
+                character.toString()
+            }
+        }
+    }
+
+    private fun renderSherpaTranscript() {
+        transcriptView.text =
+            buildString {
+                if (sherpaFinalTranscript.isNotEmpty()) {
+                    append(sherpaFinalTranscript)
+                }
+
+                if (sherpaPartialTranscript.isNotBlank()) {
+                    if (isNotEmpty()) {
+                        append('\n')
+                    }
+                    append(sherpaPartialTranscript)
+                    append(" ▌")
+                }
+
+                if (isEmpty()) {
+                    append("Listening for English speech...")
+                }
+            }
+    }
+
+    private fun renderSherpaStatus(
+        state: String,
+        profile: SherpaProfile,
+    ) {
+        setStatus(
+            buildString {
+                append(state)
+                append("\nmodel: ")
+                append(profile.displayName)
+                append("\n")
+                append(sherpaAudioChunkMs)
+                append(" ms stateful chunks | CPU | ")
+                append(sherpaThreadCount)
+                append(" threads")
+                append("\nRMS: ")
+                append("%.4f".format(sherpaRms))
+                append(" | speech threshold: ")
+                append("%.4f".format(sherpaSpeechThreshold))
+
+                sherpaFirstPartialLatencyMs?.let { latencyMs ->
+                    append("\nfirst partial after speech: ")
+                    append(latencyMs)
+                    append(" ms")
+                }
+
+                append("\nendpoint: ~")
+                append("%.1f".format(sherpaEndpointTrailingSilenceSeconds))
+                append(" sec trailing silence")
+            }
+        )
+    }
+
+    private fun stopLiveTranscription() {
+        val controller = liveController ?: return
+
+        liveButton.isEnabled = false
+        liveButton.text = "Stopping live transcription..."
+        liveStateLabel = "STOPPING LIVE"
+        renderLiveStatus()
+        controller.requestStop()
+    }
+
+    private fun renderLiveTranscript() {
+        transcriptView.text =
+            buildString {
+                if (finalLiveTranscript.isNotEmpty()) {
+                    append(finalLiveTranscript)
+                }
+
+                if (currentPartialTranscript.isNotBlank()) {
+                    if (isNotEmpty()) {
+                        append('\n')
+                    }
+                    append(currentPartialTranscript)
+                    append(" ▌")
+                }
+
+                if (isEmpty()) {
+                    append("Listening for speech...")
+                }
+            }
+    }
+
+    private fun renderLiveStatus() {
+        setStatus(
+            buildString {
+                append(liveStateLabel)
+                append("\nRMS: ")
+                append("%.4f".format(liveRms))
+                append(" | threshold: ")
+                append("%.4f".format(liveThreshold))
+
+                if (liveInferenceLine.isNotBlank()) {
+                    append('\n')
+                    append(liveInferenceLine)
+                }
+
+                append("\nVAD: auto start | final after 700 ms silence")
+                append("\nlive partial: tiny.en | final: base.en")
+                append("\npartial: <=2.8 sec rolling window | ~1.2 sec steps")
+            }
+        )
     }
 
     private fun stopRecording() {
@@ -435,6 +1486,75 @@ class WhisperTestActivity : Activity() {
         )
     }
 
+    private fun renderRuntimeInfo() {
+        val sherpaProfile = SherpaProfile.BETTER_2023_06_26
+
+        nativeView.text =
+            buildString {
+                append("SHERPA-ONNX\n")
+                append("model: ")
+                append(sherpaProfile.displayName)
+                append('\n')
+                append("installed: ")
+                append(if (sherpaBetterModelReady) "YES" else "NO")
+                append('\n')
+                append("encoder: ")
+                append(sherpaProfile.modelSpec.encoderFile)
+                append('\n')
+                append("decoder: ")
+                append(sherpaProfile.modelSpec.decoderFile)
+                append('\n')
+                append("joiner: ")
+                append(sherpaProfile.modelSpec.joinerFile)
+
+                if (sherpaThreadCount > 0) {
+                    append("\nCPU: ")
+                    append(sherpaThreadCount)
+                    append(" threads")
+                }
+
+                if (sherpaAudioChunkMs > 0) {
+                    append(" | chunk: ")
+                    append(sherpaAudioChunkMs)
+                    append(" ms")
+                }
+
+                if (sherpaEndpointTrailingSilenceSeconds > 0.0f) {
+                    append("\nendpoint: ")
+                    append("%.1f".format(sherpaEndpointTrailingSilenceSeconds))
+                    append(" sec trailing silence")
+                }
+
+                append("\n\nWHISPER.CPP\n")
+                append("live model: ")
+                append(File(filesDir, LIVE_PARTIAL_MODEL_RELATIVE_PATH).name)
+                append(
+                    if (File(filesDir, LIVE_PARTIAL_MODEL_RELATIVE_PATH).isFile) {
+                        " [installed]"
+                    } else {
+                        " [missing]"
+                    }
+                )
+                append("\nfinal model: ")
+                append(File(filesDir, FINAL_MODEL_RELATIVE_PATH).name)
+                append(
+                    if (File(filesDir, FINAL_MODEL_RELATIVE_PATH).isFile) {
+                        " [installed]"
+                    } else {
+                        " [missing]"
+                    }
+                )
+                append("\nCPU: ")
+                append(THREAD_COUNT)
+                append(" threads")
+
+                if (backendReady || livePartialBackendReady) {
+                    append("\n\n")
+                    append(WhisperCppBackend.nativeInfo())
+                }
+            }
+    }
+
     private fun setStatus(message: String) {
         statusView.text = message
     }
@@ -446,9 +1566,73 @@ class WhisperTestActivity : Activity() {
 
     private fun formatRtf(value: Double): String = "%.3f".format(value)
 
+    private enum class MicrophoneAction {
+        BATCH,
+        LIVE,
+        SHERPA_20M,
+        SHERPA_BETTER,
+    }
+
+    private enum class SherpaProfile(
+        val shortName: String,
+        val displayName: String,
+        val startButtonText: String,
+        val stopButtonText: String,
+        val modelRelativePath: String,
+        val modelSpec: SherpaStreamingController.ModelSpec,
+    ) {
+        FAST_20M(
+            shortName = "Sherpa 20M",
+            displayName = "Streaming Zipformer English 20M INT8",
+            startButtonText = "Start Sherpa 20M Streaming",
+            stopButtonText = "Stop Sherpa 20M Streaming",
+            modelRelativePath =
+                "models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17",
+            modelSpec =
+                SherpaStreamingController.ModelSpec(
+                    encoderFile = "encoder-epoch-99-avg-1.onnx",
+                    decoderFile = "decoder-epoch-99-avg-1.onnx",
+                    joinerFile = "joiner-epoch-99-avg-1.onnx",
+                ),
+        ),
+        BETTER_2023_06_26(
+            shortName = "Sherpa Better",
+            displayName = "Streaming Nemotron English 0.6B 1120ms INT8",
+            startButtonText = "Start Sherpa Better English",
+            stopButtonText = "Stop Sherpa Better English",
+            modelRelativePath =
+                "models/sherpa-onnx-nemotron-speech-streaming-en-0.6b-1120ms-int8-2026-04-25",
+            modelSpec =
+                SherpaStreamingController.ModelSpec(
+                    encoderFile =
+                        "encoder.int8.onnx",
+                    decoderFile =
+                        "decoder.int8.onnx",
+                    joinerFile =
+                        "joiner.int8.onnx",
+                    modelType = "",
+                ),
+        )
+    }
+
     private companion object {
+        val COLOR_PAGE_BACKGROUND = Color.rgb(246, 247, 251)
+        val COLOR_CARD_BACKGROUND = Color.WHITE
+        val COLOR_CARD_BORDER = Color.rgb(229, 231, 235)
+        val COLOR_STATUS_BACKGROUND = Color.rgb(243, 240, 255)
+        val COLOR_STATUS_BORDER = Color.rgb(221, 214, 254)
+        val COLOR_RUNTIME_BACKGROUND = Color.rgb(239, 241, 245)
+        val COLOR_CHIP_BACKGROUND = Color.rgb(237, 233, 254)
+        val COLOR_BUTTON_SECONDARY = Color.rgb(235, 237, 242)
+        val COLOR_BUTTON_DISABLED = Color.rgb(220, 222, 228)
+        val COLOR_TEXT_PRIMARY = Color.rgb(31, 35, 43)
+        val COLOR_TEXT_SECONDARY = Color.rgb(90, 96, 108)
+        val COLOR_TEXT_TERTIARY = Color.rgb(118, 124, 137)
+        val COLOR_ACCENT = Color.rgb(103, 80, 164)
+
         const val LOG_TAG = "WhisperTest"
-        const val MODEL_RELATIVE_PATH = "models/ggml-base.en.bin"
+        const val FINAL_MODEL_RELATIVE_PATH = "models/ggml-base.en.bin"
+        const val LIVE_PARTIAL_MODEL_RELATIVE_PATH = "models/ggml-tiny.en.bin"
         const val BUNDLED_WAV_ASSET = "samples/hello_survey.wav"
         const val THREAD_COUNT = 4
         const val BENCHMARK_RUN_COUNT = 5
