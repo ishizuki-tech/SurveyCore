@@ -381,13 +381,20 @@ internal class SherpaStreamingController(
         val bufferBytes = maxOf(minBufferBytes * 2, chunkBytes * 4)
 
         val recorder =
-            AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                sampleRateHz,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                bufferBytes,
-            )
+            try {
+                AudioRecord(
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                    sampleRateHz,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    bufferBytes,
+                )
+            } catch (securityException: SecurityException) {
+                throw IllegalStateException(
+                    "RECORD_AUDIO permission is unavailable.",
+                    securityException,
+                )
+            }
 
         check(recorder.state == AudioRecord.STATE_INITIALIZED) {
             recorder.release()

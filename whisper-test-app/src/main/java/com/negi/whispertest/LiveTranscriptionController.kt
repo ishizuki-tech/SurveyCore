@@ -152,17 +152,24 @@ class LiveTranscriptionController(
             )
 
         val recorder =
-            AudioRecord.Builder()
-                .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setEncoding(encoding)
-                        .setSampleRate(sampleRateHz)
-                        .setChannelMask(channelConfig)
-                        .build()
+            try {
+                AudioRecord.Builder()
+                    .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(encoding)
+                            .setSampleRate(sampleRateHz)
+                            .setChannelMask(channelConfig)
+                            .build()
+                    )
+                    .setBufferSizeInBytes(bufferSizeBytes)
+                    .build()
+            } catch (securityException: SecurityException) {
+                throw IllegalStateException(
+                    "RECORD_AUDIO permission is unavailable.",
+                    securityException,
                 )
-                .setBufferSizeInBytes(bufferSizeBytes)
-                .build()
+            }
 
         check(recorder.state == AudioRecord.STATE_INITIALIZED) {
             recorder.release()

@@ -44,8 +44,7 @@ class WhisperTestActivity : Activity() {
     private lateinit var benchmarkButton: Button
     private lateinit var recordButton: Button
     private lateinit var liveButton: Button
-    private lateinit var sherpa20mButton: Button
-    private lateinit var sherpaBetterButton: Button
+    private lateinit var sherpaButton: Button
 
     private var backend: WhisperCppBackend? = null
     private var livePartialBackend: WhisperCppBackend? = null
@@ -59,8 +58,7 @@ class WhisperTestActivity : Activity() {
     private var pendingMicrophoneAction: MicrophoneAction? = null
     private var backendReady = false
     private var livePartialBackendReady = false
-    private var sherpa20mModelReady = false
-    private var sherpaBetterModelReady = false
+    private var sherpaModelReady = false
     private var activeSherpaProfile: SherpaProfile? = null
 
     private val partialTranscriptMerger = LivePartialTranscriptMerger()
@@ -126,8 +124,7 @@ class WhisperTestActivity : Activity() {
             when (action) {
                 MicrophoneAction.BATCH -> startRecording()
                 MicrophoneAction.LIVE -> startLiveTranscription()
-                MicrophoneAction.SHERPA_20M -> startSherpaStreaming(SherpaProfile.FAST_20M)
-                MicrophoneAction.SHERPA_BETTER -> startSherpaStreaming(SherpaProfile.BETTER_2023_06_26)
+                MicrophoneAction.SHERPA -> startSherpaStreaming(SherpaProfile.NEMOTRON_1120)
                 null -> Unit
             }
         } else {
@@ -267,28 +264,14 @@ class WhisperTestActivity : Activity() {
                 styleActionButton(primary = false)
             }
 
-        sherpa20mButton =
+        sherpaButton =
             Button(this).apply {
-                text = SherpaProfile.FAST_20M.startButtonText
+                text = SherpaProfile.NEMOTRON_1120.startButtonText
                 isEnabled = false
                 setOnClickListener {
                     if (activeSherpaProfile == null) {
-                        ensureSherpaMicrophonePermissionAndStart(SherpaProfile.FAST_20M)
-                    } else if (activeSherpaProfile == SherpaProfile.FAST_20M) {
-                        stopSherpaStreaming()
-                    }
-                }
-                styleActionButton(primary = false)
-            }
-
-        sherpaBetterButton =
-            Button(this).apply {
-                text = SherpaProfile.BETTER_2023_06_26.startButtonText
-                isEnabled = false
-                setOnClickListener {
-                    if (activeSherpaProfile == null) {
-                        ensureSherpaMicrophonePermissionAndStart(SherpaProfile.BETTER_2023_06_26)
-                    } else if (activeSherpaProfile == SherpaProfile.BETTER_2023_06_26) {
+                        ensureSherpaMicrophonePermissionAndStart()
+                    } else {
                         stopSherpaStreaming()
                     }
                 }
@@ -336,9 +319,7 @@ class WhisperTestActivity : Activity() {
         addVerticalSpace(container, sectionGap)
         container.addView(makeSectionLabel("STREAMING"), matchWidthParams())
         addVerticalSpace(container, dp(8))
-        container.addView(sherpaBetterButton, matchWidthParams())
-        addVerticalSpace(container, itemGap)
-        container.addView(sherpa20mButton, matchWidthParams())
+        container.addView(sherpaButton, matchWidthParams())
 
         addVerticalSpace(container, sectionGap)
         container.addView(makeSectionLabel("WHISPER TOOLS"), matchWidthParams())
@@ -501,14 +482,13 @@ class WhisperTestActivity : Activity() {
         (value * resources.displayMetrics.density + 0.5f).toInt()
 
     private fun initializeSherpaStreamingAvailability() {
-        sherpa20mModelReady = isSherpaModelReady(SherpaProfile.FAST_20M)
-        sherpaBetterModelReady = isSherpaModelReady(SherpaProfile.BETTER_2023_06_26)
+        sherpaModelReady = isSherpaModelReady(SherpaProfile.NEMOTRON_1120)
 
-        resetSherpaButtonLabels()
-        setSherpaButtonsEnabled(true)
+        resetSherpaButtonLabel()
+        setSherpaButtonEnabled(true)
         renderRuntimeInfo()
 
-        if (sherpaBetterModelReady) {
+        if (sherpaModelReady) {
             preloadPreferredSherpaProfile()
         } else {
             initializeBackend()
@@ -516,8 +496,8 @@ class WhisperTestActivity : Activity() {
     }
 
     private fun preloadPreferredSherpaProfile() {
-        val profile = SherpaProfile.BETTER_2023_06_26
-        if (!isSherpaProfileReady(profile)) {
+        val profile = SherpaProfile.NEMOTRON_1120
+        if (!sherpaModelReady) {
             return
         }
 
@@ -533,10 +513,10 @@ class WhisperTestActivity : Activity() {
         sherpaEndpointTrailingSilenceSeconds =
             controller.endpointTrailingSilenceSeconds
 
-        sherpaBetterButton.text = "Preparing Sherpa Better English..."
-        sherpaBetterButton.isEnabled = false
+        sherpaButton.text = "Preparing Nemotron 1120ms..."
+        sherpaButton.isEnabled = false
         setStatus(
-            "PREPARING SHERPA\n" +
+            "PREPARING NEMOTRON\n" +
                 "model: ${profile.displayName}\n" +
                 "${controller.audioChunkMs} ms stateful chunks | CPU | " +
                 "${controller.threadCount} threads\n" +
@@ -558,33 +538,33 @@ class WhisperTestActivity : Activity() {
                         sherpaController === controller &&
                         activeSherpaProfile == null
                     ) {
-                        sherpaBetterButton.text = profile.startButtonText
-                        sherpaBetterButton.isEnabled = true
+                        sherpaButton.text = profile.startButtonText
+                        sherpaButton.isEnabled = true
                         renderRuntimeInfo()
                         setStatus(
-                            "SHERPA READY\n" +
+                            "NEMOTRON READY\n" +
                                 "model: ${profile.displayName}\n" +
                                 "${controller.audioChunkMs} ms stateful chunks | CPU | " +
                                 "${controller.threadCount} threads\n" +
                                 "preload + warm-up: ${formatSeconds(preloadSeconds)} sec\n" +
-                                "initializing Whisper models in background..."
+                                "initializing Whisper tools in background..."
                         )
                         Log.d(
                             LOG_TAG,
-                            "Sherpa preload + warm-up ready in " +
+                            "Nemotron preload + warm-up ready in " +
                                 "${formatSeconds(preloadSeconds)} sec; " +
                                 "model=${profile.displayName}; threads=${controller.threadCount}",
                         )
                     }
                 } catch (throwable: Throwable) {
-                    Log.e(LOG_TAG, "Sherpa preload failed.", throwable)
+                    Log.e(LOG_TAG, "Nemotron preload failed.", throwable)
 
                     if (sherpaController === controller) {
                         controller.close()
                         sherpaController = null
                         sherpaPreparedProfile = null
-                        sherpaBetterButton.text = "Sherpa preload failed"
-                        sherpaBetterButton.isEnabled = false
+                        sherpaButton.text = "Nemotron preload failed"
+                        sherpaButton.isEnabled = false
                     }
                 } finally {
                     sherpaPreloadJob = null
@@ -611,39 +591,22 @@ class WhisperTestActivity : Activity() {
         }
     }
 
-    private fun isSherpaProfileReady(profile: SherpaProfile): Boolean =
-        when (profile) {
-            SherpaProfile.FAST_20M -> sherpa20mModelReady
-            SherpaProfile.BETTER_2023_06_26 -> sherpaBetterModelReady
-        }
-
-    private fun sherpaButtonFor(profile: SherpaProfile): Button =
-        when (profile) {
-            SherpaProfile.FAST_20M -> sherpa20mButton
-            SherpaProfile.BETTER_2023_06_26 -> sherpaBetterButton
-        }
-
-    private fun setSherpaButtonsEnabled(enabled: Boolean) {
-        sherpa20mButton.isEnabled = enabled && sherpa20mModelReady
-        sherpaBetterButton.isEnabled =
+    private fun setSherpaButtonEnabled(enabled: Boolean) {
+        sherpaButton.isEnabled =
             enabled &&
-                sherpaBetterModelReady &&
-                (sherpaPreloadJob == null || sherpaPreparedProfile != SherpaProfile.BETTER_2023_06_26)
+                sherpaModelReady &&
+                (
+                    sherpaPreloadJob == null ||
+                        sherpaPreparedProfile != SherpaProfile.NEMOTRON_1120
+                )
     }
 
-    private fun resetSherpaButtonLabels() {
-        sherpa20mButton.text =
-            if (sherpa20mModelReady) {
-                SherpaProfile.FAST_20M.startButtonText
+    private fun resetSherpaButtonLabel() {
+        sherpaButton.text =
+            if (sherpaModelReady) {
+                SherpaProfile.NEMOTRON_1120.startButtonText
             } else {
-                "Sherpa 20M model not installed"
-            }
-
-        sherpaBetterButton.text =
-            if (sherpaBetterModelReady) {
-                SherpaProfile.BETTER_2023_06_26.startButtonText
-            } else {
-                "Sherpa Better model not installed"
+                "Nemotron 1120ms model not installed"
             }
     }
 
@@ -743,7 +706,7 @@ class WhisperTestActivity : Activity() {
         benchmarkButton.isEnabled = false
         recordButton.isEnabled = false
         liveButton.isEnabled = false
-        setSherpaButtonsEnabled(false)
+        setSherpaButtonEnabled(false)
         transcriptView.text = "Running bundled WAV..."
         setStatus("TRANSCRIBING BUNDLED WAV")
 
@@ -771,7 +734,7 @@ class WhisperTestActivity : Activity() {
                 benchmarkButton.isEnabled = backendReady
                 recordButton.isEnabled = backendReady
                 liveButton.isEnabled = backendReady && livePartialBackendReady
-                setSherpaButtonsEnabled(true)
+                setSherpaButtonEnabled(true)
             }
         }
     }
@@ -785,7 +748,7 @@ class WhisperTestActivity : Activity() {
         benchmarkButton.isEnabled = false
         recordButton.isEnabled = false
         liveButton.isEnabled = false
-        setSherpaButtonsEnabled(false)
+        setSherpaButtonEnabled(false)
         transcriptView.text = "Benchmark running..."
 
         scope.launch {
@@ -825,7 +788,7 @@ class WhisperTestActivity : Activity() {
                 benchmarkButton.isEnabled = backendReady
                 recordButton.isEnabled = backendReady
                 liveButton.isEnabled = backendReady && livePartialBackendReady
-                setSherpaButtonsEnabled(true)
+                setSherpaButtonEnabled(true)
             }
         }
     }
@@ -880,23 +843,14 @@ class WhisperTestActivity : Activity() {
         ensureMicrophonePermission(MicrophoneAction.LIVE)
     }
 
-    private fun ensureSherpaMicrophonePermissionAndStart(profile: SherpaProfile) {
-        val action =
-            when (profile) {
-                SherpaProfile.FAST_20M -> MicrophoneAction.SHERPA_20M
-                SherpaProfile.BETTER_2023_06_26 -> MicrophoneAction.SHERPA_BETTER
-            }
-        ensureMicrophonePermission(action)
+    private fun ensureSherpaMicrophonePermissionAndStart() {
+        ensureMicrophonePermission(MicrophoneAction.SHERPA)
     }
 
     private fun ensureMicrophonePermission(action: MicrophoneAction) {
         when (action) {
-            MicrophoneAction.SHERPA_20M -> {
-                if (!sherpa20mModelReady) return
-            }
-
-            MicrophoneAction.SHERPA_BETTER -> {
-                if (!sherpaBetterModelReady) return
+            MicrophoneAction.SHERPA -> {
+                if (!sherpaModelReady) return
             }
 
             else -> {
@@ -908,8 +862,7 @@ class WhisperTestActivity : Activity() {
             when (action) {
                 MicrophoneAction.BATCH -> startRecording()
                 MicrophoneAction.LIVE -> startLiveTranscription()
-                MicrophoneAction.SHERPA_20M -> startSherpaStreaming(SherpaProfile.FAST_20M)
-                MicrophoneAction.SHERPA_BETTER -> startSherpaStreaming(SherpaProfile.BETTER_2023_06_26)
+                MicrophoneAction.SHERPA -> startSherpaStreaming(SherpaProfile.NEMOTRON_1120)
             }
             return
         }
@@ -935,7 +888,7 @@ class WhisperTestActivity : Activity() {
         wavButton.isEnabled = false
         benchmarkButton.isEnabled = false
         liveButton.isEnabled = false
-        setSherpaButtonsEnabled(false)
+        setSherpaButtonEnabled(false)
         recordButton.text = "Stop and transcribe"
         transcriptView.text = "Listening..."
         setStatus("RECORDING\n16 kHz mono PCM16\nMaximum $MAX_RECORDING_SECONDS sec")
@@ -972,7 +925,7 @@ class WhisperTestActivity : Activity() {
                     wavButton.isEnabled = backendReady
                     benchmarkButton.isEnabled = backendReady
                     liveButton.isEnabled = backendReady && livePartialBackendReady
-                    setSherpaButtonsEnabled(true)
+                    setSherpaButtonEnabled(true)
                 }
             }
 
@@ -1013,7 +966,7 @@ class WhisperTestActivity : Activity() {
         wavButton.isEnabled = false
         benchmarkButton.isEnabled = false
         recordButton.isEnabled = false
-        setSherpaButtonsEnabled(false)
+        setSherpaButtonEnabled(false)
         liveButton.text = "Stop Whisper live transcription"
         liveButton.isEnabled = true
 
@@ -1154,7 +1107,7 @@ class WhisperTestActivity : Activity() {
                                 liveInferenceLine = ""
                                 liveButton.text = "Start Whisper live transcription"
                                 liveButton.isEnabled = backendReady && livePartialBackendReady
-                                setSherpaButtonsEnabled(true)
+                                setSherpaButtonEnabled(true)
                                 wavButton.isEnabled = backendReady
                                 benchmarkButton.isEnabled = backendReady
                                 recordButton.isEnabled = backendReady
@@ -1175,7 +1128,7 @@ class WhisperTestActivity : Activity() {
             activeSherpaProfile != null ||
             liveController != null ||
             recordingJob != null ||
-            !isSherpaProfileReady(profile)
+            !isSherpaModelReady(profile)
         ) {
             return
         }
@@ -1192,13 +1145,13 @@ class WhisperTestActivity : Activity() {
         benchmarkButton.isEnabled = false
         recordButton.isEnabled = false
         liveButton.isEnabled = false
-        setSherpaButtonsEnabled(false)
-        sherpaButtonFor(profile).apply {
+        setSherpaButtonEnabled(false)
+        sherpaButton.apply {
             text = profile.stopButtonText
             isEnabled = true
         }
         transcriptView.text = "Listening..."
-        renderSherpaStatus("SHERPA STARTING", profile)
+        renderSherpaStatus("NEMOTRON STARTING", profile)
 
         val controller =
             if (
@@ -1221,7 +1174,7 @@ class WhisperTestActivity : Activity() {
             object : SherpaStreamingController.Listener {
                         override fun onStarted() {
                             runOnUiThread {
-                                renderSherpaStatus("SHERPA STREAMING", profile)
+                                renderSherpaStatus("NEMOTRON STREAMING", profile)
                             }
                         }
 
@@ -1232,7 +1185,7 @@ class WhisperTestActivity : Activity() {
                             runOnUiThread {
                                 sherpaRms = rms
                                 sherpaSpeechThreshold = speechThreshold
-                                renderSherpaStatus("SHERPA STREAMING", profile)
+                                renderSherpaStatus("NEMOTRON STREAMING", profile)
                             }
                         }
 
@@ -1246,7 +1199,7 @@ class WhisperTestActivity : Activity() {
                                     sherpaFirstPartialLatencyMs = firstPartialLatencyMs
                                 }
                                 renderSherpaTranscript()
-                                renderSherpaStatus("SHERPA STREAMING", profile)
+                                renderSherpaStatus("NEMOTRON STREAMING", profile)
                             }
                         }
 
@@ -1262,7 +1215,7 @@ class WhisperTestActivity : Activity() {
                                 sherpaPartialTranscript = ""
                                 sherpaFirstPartialLatencyMs = null
                                 renderSherpaTranscript()
-                                renderSherpaStatus("SHERPA ENDPOINT — LISTENING", profile)
+                                renderSherpaStatus("NEMOTRON ENDPOINT — LISTENING", profile)
                             }
                         }
 
@@ -1278,14 +1231,14 @@ class WhisperTestActivity : Activity() {
                             runOnUiThread {
                                 activeSherpaProfile = null
                                 sherpaPartialTranscript = ""
-                                resetSherpaButtonLabels()
-                                setSherpaButtonsEnabled(true)
+                                resetSherpaButtonLabel()
+                                setSherpaButtonEnabled(true)
                                 wavButton.isEnabled = backendReady
                                 benchmarkButton.isEnabled = backendReady
                                 recordButton.isEnabled = backendReady
                                 liveButton.isEnabled = backendReady && livePartialBackendReady
                                 if (!sherpaHadError) {
-                                    renderSherpaStatus("SHERPA STOPPED", profile)
+                                    renderSherpaStatus("NEMOTRON STOPPED", profile)
                                 }
                             }
                         }
@@ -1307,8 +1260,8 @@ class WhisperTestActivity : Activity() {
             activeSherpaProfile = null
             Log.e(LOG_TAG, "Failed to start Sherpa streaming.", throwable)
             showError("Sherpa start error", throwable)
-            resetSherpaButtonLabels()
-            setSherpaButtonsEnabled(true)
+            resetSherpaButtonLabel()
+            setSherpaButtonEnabled(true)
             wavButton.isEnabled = backendReady
             benchmarkButton.isEnabled = backendReady
             recordButton.isEnabled = backendReady
@@ -1320,12 +1273,12 @@ class WhisperTestActivity : Activity() {
         val controller = sherpaController ?: return
         val profile = activeSherpaProfile ?: return
 
-        setSherpaButtonsEnabled(false)
-        sherpaButtonFor(profile).apply {
+        setSherpaButtonEnabled(false)
+        sherpaButton.apply {
             isEnabled = false
             text = "Stopping ${profile.shortName}..."
         }
-        renderSherpaStatus("SHERPA STOPPING", profile)
+        renderSherpaStatus("NEMOTRON STOPPING", profile)
         controller.requestStop()
     }
 
@@ -1487,7 +1440,7 @@ class WhisperTestActivity : Activity() {
     }
 
     private fun renderRuntimeInfo() {
-        val sherpaProfile = SherpaProfile.BETTER_2023_06_26
+        val sherpaProfile = SherpaProfile.NEMOTRON_1120
 
         nativeView.text =
             buildString {
@@ -1496,7 +1449,7 @@ class WhisperTestActivity : Activity() {
                 append(sherpaProfile.displayName)
                 append('\n')
                 append("installed: ")
-                append(if (sherpaBetterModelReady) "YES" else "NO")
+                append(if (sherpaModelReady) "YES" else "NO")
                 append('\n')
                 append("encoder: ")
                 append(sherpaProfile.modelSpec.encoderFile)
@@ -1569,8 +1522,7 @@ class WhisperTestActivity : Activity() {
     private enum class MicrophoneAction {
         BATCH,
         LIVE,
-        SHERPA_20M,
-        SHERPA_BETTER,
+        SHERPA,
     }
 
     private enum class SherpaProfile(
@@ -1581,35 +1533,18 @@ class WhisperTestActivity : Activity() {
         val modelRelativePath: String,
         val modelSpec: SherpaStreamingController.ModelSpec,
     ) {
-        FAST_20M(
-            shortName = "Sherpa 20M",
-            displayName = "Streaming Zipformer English 20M INT8",
-            startButtonText = "Start Sherpa 20M Streaming",
-            stopButtonText = "Stop Sherpa 20M Streaming",
-            modelRelativePath =
-                "models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17",
-            modelSpec =
-                SherpaStreamingController.ModelSpec(
-                    encoderFile = "encoder-epoch-99-avg-1.onnx",
-                    decoderFile = "decoder-epoch-99-avg-1.onnx",
-                    joinerFile = "joiner-epoch-99-avg-1.onnx",
-                ),
-        ),
-        BETTER_2023_06_26(
-            shortName = "Sherpa Better",
-            displayName = "Streaming Nemotron English 0.6B 1120ms INT8",
-            startButtonText = "Start Sherpa Better English",
-            stopButtonText = "Stop Sherpa Better English",
+        NEMOTRON_1120(
+            shortName = "Nemotron 1120ms",
+            displayName = "Nemotron Speech Streaming English 0.6B 1120ms INT8",
+            startButtonText = "Start Nemotron 1120ms Streaming",
+            stopButtonText = "Stop Nemotron 1120ms Streaming",
             modelRelativePath =
                 "models/sherpa-onnx-nemotron-speech-streaming-en-0.6b-1120ms-int8-2026-04-25",
             modelSpec =
                 SherpaStreamingController.ModelSpec(
-                    encoderFile =
-                        "encoder.int8.onnx",
-                    decoderFile =
-                        "decoder.int8.onnx",
-                    joinerFile =
-                        "joiner.int8.onnx",
+                    encoderFile = "encoder.int8.onnx",
+                    decoderFile = "decoder.int8.onnx",
+                    joinerFile = "joiner.int8.onnx",
                     modelType = "",
                 ),
         )
