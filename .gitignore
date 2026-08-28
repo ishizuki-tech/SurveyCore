@@ -1,0 +1,147 @@
+# ============================================================
+# Android / Gradle build outputs
+# ============================================================
+
+.gradle/
+.kotlin/
+build/
+**/build/
+
+# Android native build outputs
+.externalNativeBuild/
+.cxx/
+**/.externalNativeBuild/
+**/.cxx/
+
+# Android Studio generated capture files
+captures/
+
+
+# ============================================================
+# Local Android configuration
+# ============================================================
+
+# Contains machine-specific Android SDK paths.
+local.properties
+
+
+# ============================================================
+# Android Studio / IntelliJ IDEA
+# ============================================================
+
+# Keep IDE metadata local to each developer/machine.
+.idea/
+*.iml
+
+
+# ============================================================
+# macOS
+# ============================================================
+
+.DS_Store
+.AppleDouble
+.LSOverride
+
+
+# ============================================================
+# Generated application packages
+# ============================================================
+
+*.apk
+*.aab
+*.ap_
+*.dex
+
+
+# ============================================================
+# Native / CMake generated files
+# ============================================================
+
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+.ninja_deps
+.ninja_log
+
+
+# ============================================================
+# Local AI models
+# ============================================================
+#
+# Large model binaries must never be committed to Git.
+#
+# Match model files in any module or directory named "models".
+# The directories themselves remain available for README files,
+# metadata, download instructions, and other small text files.
+#
+
+**/models/*.litertlm
+**/models/*.gguf
+**/models/*.bin
+**/models/*.safetensors
+**/models/*.onnx
+**/models/*.tflite
+
+
+# ============================================================
+# Model download temporary files
+# ============================================================
+
+**/models/*.part
+**/models/*.tmp
+**/models/*.download
+
+
+# ============================================================
+# Debug / profiling output
+# ============================================================
+
+*.hprof
+*.log
+
+
+# ============================================================
+# Signing credentials
+# ============================================================
+#
+# Signing keys and local credential files must never be stored
+# in the repository.
+#
+
+*.jks
+*.keystore
+keystore.properties
+
+
+# ============================================================
+# Environment / secret files
+# ============================================================
+
+.env
+.env.*
+!.env.example
+
+
+# ============================================================
+# Miscellaneous temporary / editor files
+# ============================================================
+
+*.tmp
+*.swp
+*.swo
+*~
+
+
+# ============================================================
+# Third-party source dependencies
+# ============================================================
+#
+# third_party/llama.cpp and third_party/whisper.cpp are Git
+# submodules. Do not ignore these paths; the root repository
+# tracks their gitlink commit SHAs through .gitmodules.
+#
+
+# Local helper scripts
+share_chatgpt.sh

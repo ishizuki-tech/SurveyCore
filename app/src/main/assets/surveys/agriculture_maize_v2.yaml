@@ -1,0 +1,196 @@
+schemaVersion: 2
+
+survey:
+  id: agriculture_maize
+  version: 1
+  title: Maize Farmer Survey
+  defaultLanguage: en
+  supportedLanguages:
+    - en
+
+interviewer:
+  instruction: >
+    You are a professional and neutral agricultural survey interviewer.
+    Understand each respondent answer in the context of the current survey
+    question and previous follow-up exchanges.
+    Ask concise and natural follow-up questions only when important
+    information required by the interview goal is still missing or ambiguous.
+    Do not invent information about the respondent.
+    Do not ask for information that has already been provided.
+    Do not ask for unnecessary detail.
+
+flow:
+  startNodeId: Start
+
+  nodes:
+    - id: Start
+      type: start
+      next: Q1
+
+    - id: Q1
+      type: question
+      title: FAW Yield Loss (3 Seasons)
+
+      prompt: >
+        How much yield do you lose because of fall armyworm?
+        Please think back over the last 3 seasons.
+        Percent or bags per acre are fine.
+
+      answer:
+        type: text
+        required: true
+        inputModes:
+          - text
+
+      followUp:
+        enabled: true
+        goal: >
+          Understand the respondent's fall armyworm yield loss over the
+          last three seasons. A sufficient answer must make both the
+          approximate yield-loss magnitude and its measurement unit
+          unambiguous. The respondent may use percent, bags per acre,
+          or another clear unit. If the respondent gives only a number
+          while the survey question offers multiple possible units,
+          the answer is not yet sufficient and the interviewer should
+          ask which unit the number uses.
+        maxQuestions: 2
+
+      next: Q2
+
+    - id: Q2
+      type: question
+      title: Trade-off for 10-Day Earlier Harvest
+
+      prompt: >
+        If you could harvest 10 days earlier, how much yield
+        would you be willing to give up?
+        Percent or bags per acre are fine.
+
+      answer:
+        type: text
+        required: true
+        inputModes:
+          - text
+
+      followUp:
+        enabled: true
+        goal: >
+          Understand the maximum amount of yield the respondent would
+          be willing to give up in exchange for harvesting ten days
+          earlier, including a clear magnitude and measurement unit.
+        maxQuestions: 2
+
+      next: Q3
+
+    - id: Q3
+      type: question
+      title: Damage Threshold to Switch Variety
+
+      prompt: >
+        At what level of pest or disease damage would you decide
+        to switch to a different maize variety?
+        Please give a clear threshold, for example percent of
+        plants or ears affected, severity, and crop stage.
+
+      answer:
+        type: text
+        required: true
+        inputModes:
+          - text
+
+      followUp:
+        enabled: true
+        goal: >
+          Understand the damage threshold that would cause the respondent
+          to switch maize variety well enough to know what damage is being
+          measured, the approximate threshold level, and the crop stage or
+          timing at which that threshold applies.
+        maxQuestions: 2
+
+      next: Q4
+
+    - id: Q4
+      type: question
+      title: Expectations for Replacement Variety
+
+      prompt: >
+        If you replaced your current maize variety, what would you
+        expect from the new variety?
+        Please think about things such as days to maturity,
+        fall armyworm tolerance, drought tolerance at specific
+        crop stages, and typical yield.
+
+      answer:
+        type: text
+        required: true
+        inputModes:
+          - text
+
+      followUp:
+        enabled: true
+        goal: >
+          Understand the respondent's important priorities for a replacement
+          maize variety and obtain at least one sufficiently concrete or
+          measurable target associated with a stated priority such as
+          maturity, fall armyworm tolerance, drought tolerance, or yield.
+        maxQuestions: 2
+
+      next: Q5
+
+    - id: Q5
+      type: question
+      title: Minimum Acceptable Harvest in Bad Year
+
+      prompt: >
+        In a bad year, what is the smallest harvest you would
+        accept and still plant the same maize variety next season?
+        You can answer as a percent of your usual harvest or
+        in bags per acre.
+
+      answer:
+        type: text
+        required: true
+        inputModes:
+          - text
+
+      followUp:
+        enabled: true
+        goal: >
+          Understand the respondent's minimum acceptable harvest in a bad
+          year while still being willing to plant the same maize variety
+          next season, including the approximate magnitude and its baseline
+          or measurement unit.
+        maxQuestions: 2
+
+      next: Q6
+
+    - id: Q6
+      type: question
+      title: Most Damaging Drought Timing
+
+      prompt: >
+        At what stage of maize growth is drought most damaging
+        for you?
+        For example, before tasseling, during tasseling or silking,
+        during grain fill, or before harvest.
+        Please briefly explain why.
+
+      answer:
+        type: text
+        required: true
+        inputModes:
+          - text
+
+      followUp:
+        enabled: true
+        goal: >
+          Understand which maize growth stage or timing the respondent
+          considers most vulnerable to drought and obtain a brief explanation
+          of why drought at that stage is especially damaging.
+        maxQuestions: 2
+
+      next: Done
+
+    - id: Done
+      type: end
+      completionMessage: Thank you. The survey is complete.
