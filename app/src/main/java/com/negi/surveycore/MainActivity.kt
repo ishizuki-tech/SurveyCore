@@ -1,8 +1,12 @@
 package com.negi.surveycore
 
 import android.os.Bundle
+import android.Manifest
+import android.content.pm.PackageManager
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -20,6 +24,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,8 +32,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.negi.surveycore.ai.backend.litertlm.LiteRtLmBackend
+import com.negi.surveycore.asr.sherpa.NemotronStreamingAsr
 import com.negi.surveycore.ai.model.ModelSurveyAi
 import com.negi.surveycore.survey.core.ai.SurveyAi
 import com.negi.surveycore.survey.core.controller.SurveyController
@@ -40,6 +47,8 @@ import com.negi.surveycore.survey.source.AssetSurveySource
 import com.negi.surveycore.ui.theme.SurveyCoreTheme
 import java.io.File
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
@@ -220,6 +229,150 @@ private fun AgricultureSurveyDemo(
         mutableStateOf(false)
     }
 
+    var voicePrepared by
+        remember {
+            mutableStateOf(false)
+        }
+
+    var voiceActive by
+        remember {
+            mutableStateOf(false)
+        }
+
+    var voiceStatus by
+        remember {
+            mutableStateOf("ASR: preparing Nemotron 1120ms...")
+        }
+
+    var voiceFinalText by
+        remember {
+            mutableStateOf("")
+        }
+
+    var voiceRms by
+        remember {
+            mutableStateOf(0.0f)
+        }
+
+    val context =
+        LocalContext.current
+
+    val voiceAsr =
+        remember(context) {
+            NemotronStreamingAsr(
+                context =
+                    context.applicationContext,
+                modelDir =
+                    File(
+                        context.filesDir,
+                        NemotronStreamingAsr.MODEL_RELATIVE_PATH,
+                    ),
+                listener =
+                    object : NemotronStreamingAsr.Listener {
+                        override fun onStarted() {
+                            voiceActive = true
+                            voiceStatus = "ASR: listening"
+                        }
+
+                        override fun onAudioLevel(
+                            rms: Float,
+                        ) {
+                            voiceRms = rms
+                        }
+
+                        override fun onPartial(
+                            text: String,
+                        ) {
+                            input =
+                                combineVoiceText(
+                                    voiceFinalText,
+                                    text,
+                                )
+                        }
+
+                        override fun onFinal(
+                            text: String,
+                        ) {
+                            voiceFinalText =
+                                combineVoiceText(
+                                    voiceFinalText,
+                                    text,
+                                )
+
+                            input =
+                                voiceFinalText
+                        }
+
+                        override fun onError(
+                            throwable: Throwable,
+                        ) {
+                            voiceActive = false
+                            voiceStatus =
+                                "ASR error: ${
+                                    throwable.message
+                                        ?: throwable::class.java.simpleName
+                                }"
+                        }
+
+                        override fun onStopped() {
+                            voiceActive = false
+                            voiceStatus =
+                                "ASR: Nemotron 1120ms ready"
+                        }
+                    },
+            )
+        }
+
+    val microphonePermissionLauncher =
+        rememberLauncherForActivityResult(
+            contract =
+                ActivityResultContracts.RequestPermission(),
+        ) {
+                granted ->
+
+            if (granted) {
+                voiceFinalText = ""
+                input = ""
+                voiceAsr.start()
+            } else {
+                voiceStatus =
+                    "ASR: microphone permission denied"
+            }
+        }
+
+    LaunchedEffect(
+        voiceAsr
+    ) {
+        try {
+            withContext(
+                Dispatchers.IO
+            ) {
+                voiceAsr.preload()
+            }
+
+            voicePrepared = true
+            voiceStatus =
+                "ASR: Nemotron 1120ms ready"
+        } catch (
+            exception: Exception
+        ) {
+            voicePrepared = false
+            voiceStatus =
+                "ASR unavailable: ${
+                    exception.message
+                        ?: exception::class.java.simpleName
+                }"
+        }
+    }
+
+    DisposableEffect(
+        voiceAsr
+    ) {
+        onDispose {
+            voiceAsr.close()
+        }
+    }
+
     LaunchedEffect(
         controller
     ) {
@@ -312,6 +465,30 @@ private fun AgricultureSurveyDemo(
 
         Text(
             text =
+                "ASR: Nemotron 1120ms / sherpa-onnx",
+            style =
+                MaterialTheme
+                    .typography
+                    .labelSmall,
+        )
+
+        Text(
+            text =
+                if (voiceActive) {
+                    "$voiceStatus • RMS ${
+                        "%.4f".format(voiceRms)
+                    }"
+                } else {
+                    voiceStatus
+                },
+            style =
+                MaterialTheme
+                    .typography
+                    .labelSmall,
+        )
+
+        Text(
+            text =
                 "Phase: $phase",
             style =
                 MaterialTheme
@@ -366,12 +543,55 @@ private fun AgricultureSurveyDemo(
                 },
                 enabled =
                     !busy &&
-                            canSubmit,
+                            canSubmit &&
+                            !voiceActive,
                 minLines =
                     1,
                 maxLines =
                     4,
             )
+
+            Button(
+                modifier =
+                    Modifier.fillMaxWidth(),
+                onClick = {
+                    if (voiceActive) {
+                        voiceAsr.requestStop()
+                    } else {
+                        voiceFinalText = ""
+                        input = ""
+
+                        if (
+                            context.checkSelfPermission(
+                                Manifest.permission.RECORD_AUDIO
+                            ) ==
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            voiceAsr.start()
+                        } else {
+                            microphonePermissionLauncher.launch(
+                                Manifest.permission.RECORD_AUDIO
+                            )
+                        }
+                    }
+                },
+                enabled =
+                    voiceActive ||
+                        (
+                            !busy &&
+                                canSubmit &&
+                                voicePrepared
+                            ),
+            ) {
+                Text(
+                    text =
+                        if (voiceActive) {
+                            "Stop voice input"
+                        } else {
+                            "Start voice input"
+                        }
+                )
+            }
 
             Button(
                 modifier =
@@ -426,6 +646,7 @@ private fun AgricultureSurveyDemo(
                 },
                 enabled =
                     !busy &&
+                            !voiceActive &&
                             canSubmit &&
                             input.isNotBlank(),
             ) {
@@ -567,6 +788,20 @@ private fun AgricultureSurveyDemo(
                 }
             }
         }
+    }
+}
+
+private fun combineVoiceText(
+    committed: String,
+    incoming: String,
+): String {
+    val left = committed.trim()
+    val right = incoming.trim()
+
+    return when {
+        left.isEmpty() -> right
+        right.isEmpty() -> left
+        else -> "$left $right"
     }
 }
 

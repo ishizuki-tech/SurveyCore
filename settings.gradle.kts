@@ -25,5 +25,6 @@ dependencyResolutionManagement {
 rootProject.name = "SurveyCore"
 include(":app")
 include(":asr-whispercpp")
+include(":asr-sherpa")
 
 include(":whisper-test-app")

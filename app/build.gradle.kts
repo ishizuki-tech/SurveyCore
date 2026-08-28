@@ -3,6 +3,13 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+val sherpaOnnxAar =
+    file(
+        System.getenv("SURVEYCORE_SHERPA_AAR")
+            ?: "${System.getProperty("user.home")}/.cache/surveycore/libs/sherpa-onnx-1.13.4.aar"
+    )
+
+
 android {
     namespace = "com.negi.surveycore"
     compileSdk {
@@ -43,6 +50,7 @@ android {
             optimization {
                 enable = false
             }
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     compileOptions {
@@ -55,6 +63,8 @@ android {
 }
 
 dependencies {
+    implementation(project(":asr-sherpa"))
+    implementation(files(sherpaOnnxAar))
 
     debugImplementation(
         project(":asr-whispercpp")
