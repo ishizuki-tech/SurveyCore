@@ -39,40 +39,59 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          # API 37 is newer than the command-line tools bundled by the
-          # default setup-android@v3 configuration.
-          cmdline-tools-version: 15859902
           accept-android-sdk-licenses: true
           log-accepted-android-sdk-licenses: false
 
-      - name: Install Android SDK components
+      - name: Locate Android CLI
+        id: android_cli
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "::group::sdkmanager version"
-          sdkmanager --version
+          ANDROID_CLI="$(command -v android || true)"
+
+          if [[ -z "$ANDROID_CLI" ]]; then
+            ANDROID_CLI="$(
+              find "$ANDROID_SDK_ROOT/cmdline-tools"                 -type f                 -path '*/bin/android'                 -print                 | sort -V                 | tail -1
+            )"
+          fi
+
+          if [[ -z "$ANDROID_CLI" || ! -x "$ANDROID_CLI" ]]; then
+            echo "Android CLI was not found." >&2
+            find "$ANDROID_SDK_ROOT/cmdline-tools" -maxdepth 4 -type f -name android -print || true
+            exit 1
+          fi
+
+          echo "Android CLI: $ANDROID_CLI"
+          "$ANDROID_CLI" --version
+          echo "path=$ANDROID_CLI" >> "$GITHUB_OUTPUT"
+
+      - name: Inspect Android 17 SDK packages
+        shell: bash
+        env:
+          ANDROID_CLI: ${{ steps.android_cli.outputs.path }}
+        run: |
+          set -euo pipefail
+
+          echo "::group::Android 17 platform"
+          "$ANDROID_CLI" sdk list 'platforms/android-37' --all --all-versions --canary || true
           echo "::endgroup::"
 
-          echo "::group::API 37 packages visible to sdkmanager"
-          sdkmanager --channel=3 --list \
-            | grep -E 'platforms;android-37|build-tools;37' \
-            || true
+          echo "::group::Android 37 build tools"
+          "$ANDROID_CLI" sdk list 'build-tools/37.*' --all --all-versions --canary || true
           echo "::endgroup::"
 
-          # Android 17 / API 37 can be on a preview channel.
-          # Build Tools 36.0.0 is sufficient for AGP builds targeting API 37.
-          sdkmanager --channel=3 \
-            "platform-tools" \
-            "platforms;android-37" \
-            "build-tools;36.0.0" \
-            "ndk;29.0.14206865" \
-            "cmake;3.22.1"
+      - name: Install Android SDK components
+        shell: bash
+        env:
+          ANDROID_CLI: ${{ steps.android_cli.outputs.path }}
+        run: |
+          set -euo pipefail
+
+          "$ANDROID_CLI" sdk install --canary             platform-tools             platforms/android-37             build-tools/37.0.0             ndk/29.0.14206865             cmake/3.22.1
 
           echo "::group::Installed Android SDK packages"
-          sdkmanager --list_installed \
-            | grep -E 'platform-tools|platforms;android-37|build-tools;36.0.0|ndk;29.0.14206865|cmake;3.22.1' \
-            || true
+          "$ANDROID_CLI" sdk list             'platform-tools|platforms/android-37|build-tools/37.*|ndk/29.0.14206865|cmake/3.22.1'             --all             --all-versions             --canary             || true
           echo "::endgroup::"
 
       - name: Set up Gradle cache
@@ -89,6 +108,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           ./scripts/download_sherpa_onnx_android_aar.sh
 
           AAR="$HOME/.cache/surveycore/libs/sherpa-onnx-1.13.4.aar"
@@ -104,14 +124,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "Java:"
+
+          echo "::group::Java"
           java -version
-          echo
-          echo "Gradle:"
+          echo "::endgroup::"
+
+          echo "::group::Gradle"
           ./gradlew --version
-          echo
-          echo "Git:"
+          echo "::endgroup::"
+
+          echo "::group::Git"
           git log -1 --oneline --decorate
+          echo "::endgroup::"
+
+          echo "::group::Android SDK files"
+          ls -ld             "$ANDROID_SDK_ROOT/platforms/android-37"             "$ANDROID_SDK_ROOT/build-tools/37.0.0"             "$ANDROID_SDK_ROOT/ndk/29.0.14206865"             "$ANDROID_SDK_ROOT/cmake/3.22.1"
+          echo "::endgroup::"
 
       - name: Lint app
         run: ./gradlew :app:lint --stacktrace
@@ -125,12 +153,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          APK="$(find app/build/outputs/apk/release \
-            -maxdepth 1 \
-            -type f \
-            -name '*.apk' \
-            -print \
-            | head -1)"
+          APK="$(
+            find app/build/outputs/apk/release               -maxdepth 1               -type f               -name '*.apk'               -print               | head -1
+          )"
 
           if [[ -z "$APK" ]]; then
             echo "No release APK found." >&2
