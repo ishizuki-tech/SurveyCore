@@ -1,0 +1,13 @@
+{
+  "repository": "ishizuki-tech/SurveyCore",
+  "release_tag": "build-13-82197cb",
+  "release_url": "https://github.com/ishizuki-tech/SurveyCore/releases/tag/build-13-82197cb",
+  "download_url": "https://github.com/ishizuki-tech/SurveyCore/releases/download/build-13-82197cb/SurveyCore-82197cb-internal-release.apk",
+  "apk_name": "SurveyCore-82197cb-internal-release.apk",
+  "apk_sha256": "92fcca5d4ca8693a2f5ba3bfc3bf0c35ebd811b82e5d5773e083c284c95b6d39",
+  "short_sha": "82197cb",
+  "run_id": "33237969045",
+  "run_number": "13",
+  "signing_certificate_sha256": "e0f3ce7dd68625e496628df2a3798d05e671968ca83a8801bcf7bd5f4c06e8ec",
+  "generated_utc": "2026-08-29 06:19 UTC"
+}
