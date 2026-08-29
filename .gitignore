@@ -147,3 +147,6 @@ keystore.properties
 share_chatgpt.sh
 # GitHub Actions-generated bundled Nemotron model assets
 app/src/main/assets/models/sherpa-onnx-nemotron-speech-streaming-en-0.6b-1120ms-int8-2026-04-25/
+
+app/src/main/assets/internal/hf_token.properties
+app/src/main/res/values/internal_hf_token_generated.xml

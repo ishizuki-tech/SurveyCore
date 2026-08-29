@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Internal Android APK
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: android-apk-${{ github.ref }}
+  group: internal-android-apk-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -18,10 +18,10 @@ env:
   ANDROID_HOME: /usr/local/lib/android/sdk
 
 jobs:
-  build-release-apk:
-    name: Build release APK
+  build-internal-release-apk:
+    name: Build internal release APK
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
 
     steps:
       - name: Checkout repository
@@ -47,24 +47,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          curl -fsSL             https://dl.google.com/android/cli/latest/linux_x86_64/install_root.sh             | sudo bash
+          curl -fsSL \
+            https://dl.google.com/android/cli/latest/linux_x86_64/install_root.sh \
+            | sudo bash
 
           echo "::group::Android CLI"
           command -v android
           android --version
-          echo "::endgroup::"
-
-      - name: Inspect Android 17 SDK packages
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "::group::Android 17 platform"
-          android --sdk="$ANDROID_SDK_ROOT"             sdk list 'platforms/android-37.0'             --all             --all-versions             --canary             || true
-          echo "::endgroup::"
-
-          echo "::group::Android 37 build tools"
-          android --sdk="$ANDROID_SDK_ROOT"             sdk list 'build-tools/37.*'             --all             --all-versions             --canary             || true
           echo "::endgroup::"
 
       - name: Install Android SDK components
@@ -72,22 +61,90 @@ jobs:
         run: |
           set -euo pipefail
 
-          android --sdk="$ANDROID_SDK_ROOT"             sdk install             --canary             platform-tools             platforms/android-37.0             build-tools/37.0.0             ndk/29.0.14206865             cmake/3.22.1
+          android --sdk="$ANDROID_SDK_ROOT" \
+            sdk install \
+            --canary \
+            platform-tools \
+            platforms/android-37.0 \
+            build-tools/37.0.0 \
+            ndk/29.0.14206865 \
+            cmake/3.22.1
 
           echo "::group::Installed SDK directories"
-          ls -ld             "$ANDROID_SDK_ROOT/platform-tools"             "$ANDROID_SDK_ROOT/platforms/android-37.0"             "$ANDROID_SDK_ROOT/build-tools/37.0.0"             "$ANDROID_SDK_ROOT/ndk/29.0.14206865"             "$ANDROID_SDK_ROOT/cmake/3.22.1"
+          ls -ld \
+            "$ANDROID_SDK_ROOT/platform-tools" \
+            "$ANDROID_SDK_ROOT/platforms/android-37.0" \
+            "$ANDROID_SDK_ROOT/build-tools/37.0.0" \
+            "$ANDROID_SDK_ROOT/ndk/29.0.14206865" \
+            "$ANDROID_SDK_ROOT/cmake/3.22.1"
           echo "::endgroup::"
 
       - name: Set up Gradle cache
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Verify internal build sources
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          required=(
+            "./gradlew"
+            "./scripts/download_sherpa_onnx_android_aar.sh"
+            "./scripts/download_sherpa_nemotron_1120ms.sh"
+            "./scripts/prepare_internal_hf_token.sh"
+            "./app/src/main/java/com/negi/surveycore/GemmaModelBootstrapActivity.kt"
+            "./app/src/main/java/com/negi/surveycore/internal/InternalHfTokenProvider.kt"
+          )
+
+          for path in "${required[@]}"; do
+            if [[ ! -f "$path" ]]; then
+              echo "Missing required internal-build file: $path" >&2
+              exit 1
+            fi
+          done
+
       - name: Make scripts executable
         shell: bash
         run: |
           set -euo pipefail
+
           chmod +x ./gradlew
           chmod +x ./scripts/download_sherpa_onnx_android_aar.sh
           chmod +x ./scripts/download_sherpa_nemotron_1120ms.sh
+          chmod +x ./scripts/prepare_internal_hf_token.sh
+
+      - name: Prepare encrypted Hugging Face token
+        shell: bash
+        env:
+          SURVEYCORE_HF_TOKEN: ${{ secrets.SURVEYCORE_HF_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${SURVEYCORE_HF_TOKEN:-}" ]]; then
+            echo "Repository Actions secret SURVEYCORE_HF_TOKEN is not configured." >&2
+            exit 1
+          fi
+
+          if [[ "$SURVEYCORE_HF_TOKEN" != hf_* ]]; then
+            echo "SURVEYCORE_HF_TOKEN does not look like a Hugging Face token." >&2
+            exit 1
+          fi
+
+          ./scripts/prepare_internal_hf_token.sh
+
+          TOKEN_ASSET="app/src/main/assets/internal/hf_token.properties"
+          TOKEN_RESOURCE="app/src/main/res/values/internal_hf_token_generated.xml"
+
+          test -s "$TOKEN_ASSET"
+          test -s "$TOKEN_RESOURCE"
+
+          # The generated project files must never contain the plaintext token.
+          if grep -Fq -- "$SURVEYCORE_HF_TOKEN" "$TOKEN_ASSET" "$TOKEN_RESOURCE"; then
+            echo "Plaintext Hugging Face token was found in generated files." >&2
+            exit 1
+          fi
+
+          echo "Encrypted internal Hugging Face credential prepared."
 
       - name: Download sherpa-onnx Android AAR
         shell: bash
@@ -104,7 +161,6 @@ jobs:
           fi
 
           ls -lh "$AAR"
-
 
       - name: Cache Nemotron 1120ms model
         uses: actions/cache@v4
@@ -164,25 +220,43 @@ jobs:
       - name: Lint app
         run: ./gradlew :app:lint --stacktrace
 
-      - name: Build release APK
+      - name: Build internal release APK
         run: ./gradlew :app:assembleRelease --stacktrace
 
-
-      - name: Verify Nemotron assets inside release APK
+      - name: Verify internal release APK
         shell: bash
+        env:
+          SURVEYCORE_HF_TOKEN: ${{ secrets.SURVEYCORE_HF_TOKEN }}
         run: |
           set -euo pipefail
 
-          APK="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print | head -1)"
-          test -n "$APK"
+          APK="$(
+            find app/build/outputs/apk/release \
+              -maxdepth 1 \
+              -type f \
+              -name '*.apk' \
+              -print \
+              | head -1
+          )"
+
+          if [[ -z "$APK" ]]; then
+            echo "No release APK found." >&2
+            exit 1
+          fi
 
           python3 - "$APK" <<'PY'
+          import os
           import sys
           import zipfile
 
           apk = sys.argv[1]
-          model = "sherpa-onnx-nemotron-speech-streaming-en-0.6b-1120ms-int8-2026-04-25"
-          required = [
+
+          model = (
+              "sherpa-onnx-nemotron-speech-streaming-en-0.6b-"
+              "1120ms-int8-2026-04-25"
+          )
+
+          nemotron_files = [
               "encoder.int8.onnx",
               "decoder.int8.onnx",
               "joiner.int8.onnx",
@@ -190,31 +264,92 @@ jobs:
           ]
 
           with zipfile.ZipFile(apk) as archive:
-              for name in required:
+              for name in nemotron_files:
                   path = f"assets/models/{model}/{name}"
                   info = archive.getinfo(path)
+
                   if info.file_size <= 0:
                       raise SystemExit(f"Empty APK asset: {path}")
+
                   if info.compress_type != zipfile.ZIP_STORED:
                       raise SystemExit(
                           f"Nemotron asset must be stored uncompressed: {path}"
                       )
+
                   print(
                       f"OK {path} "
                       f"{info.file_size / 1024 / 1024:.1f} MiB"
                   )
+
+              token_path = "assets/internal/hf_token.properties"
+              token_info = archive.getinfo(token_path)
+
+              if token_info.file_size <= 0:
+                  raise SystemExit(
+                      "Encrypted Hugging Face token asset is empty."
+                  )
+
+              token_asset = archive.read(token_path)
+
+              if b"ciphertext=" not in token_asset:
+                  raise SystemExit(
+                      "Encrypted Hugging Face token ciphertext is missing."
+                  )
+
+              print(f"OK {token_path}")
+
+          token = os.environ.get(
+              "SURVEYCORE_HF_TOKEN",
+              "",
+          ).encode("utf-8")
+
+          if not token:
+              raise SystemExit(
+                  "SURVEYCORE_HF_TOKEN is unavailable during APK verification."
+              )
+
+          # Stream through the APK so the ~600 MB artifact is not loaded at once.
+          overlap = max(len(token) - 1, 0)
+          previous = b""
+
+          with open(apk, "rb") as source:
+              while True:
+                  chunk = source.read(4 * 1024 * 1024)
+
+                  if not chunk:
+                      break
+
+                  combined = previous + chunk
+
+                  if token in combined:
+                      raise SystemExit(
+                          "Plaintext Hugging Face token was found inside the APK."
+                      )
+
+                  previous = (
+                      combined[-overlap:]
+                      if overlap
+                      else b""
+                  )
+
+          print("OK plaintext Hugging Face token is not present in APK")
           PY
 
           ls -lh "$APK"
 
-      - name: Collect APK
+      - name: Collect internal APK
         id: apk
         shell: bash
         run: |
           set -euo pipefail
 
           APK="$(
-            find app/build/outputs/apk/release               -maxdepth 1               -type f               -name '*.apk'               -print               | head -1
+            find app/build/outputs/apk/release \
+              -maxdepth 1 \
+              -type f \
+              -name '*.apk' \
+              -print \
+              | head -1
           )"
 
           if [[ -z "$APK" ]]; then
@@ -224,7 +359,7 @@ jobs:
           fi
 
           SHORT_SHA="${GITHUB_SHA::7}"
-          OUTPUT="SurveyCore-${SHORT_SHA}-release.apk"
+          OUTPUT="SurveyCore-${SHORT_SHA}-internal-release.apk"
 
           cp "$APK" "$OUTPUT"
 
@@ -232,10 +367,10 @@ jobs:
           echo "Built: $OUTPUT"
           ls -lh "$OUTPUT"
 
-      - name: Upload APK artifact
+      - name: Upload internal APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SurveyCore-release-apk
+          name: SurveyCore-internal-release-apk
           path: ${{ steps.apk.outputs.path }}
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
