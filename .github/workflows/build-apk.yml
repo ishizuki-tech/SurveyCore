@@ -60,7 +60,7 @@ jobs:
           set -euo pipefail
 
           echo "::group::Android 17 platform"
-          android --sdk="$ANDROID_SDK_ROOT"             sdk list 'platforms/android-37'             --all             --all-versions             --canary             || true
+          android --sdk="$ANDROID_SDK_ROOT"             sdk list 'platforms/android-37.0'             --all             --all-versions             --canary             || true
           echo "::endgroup::"
 
           echo "::group::Android 37 build tools"
@@ -72,10 +72,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          android --sdk="$ANDROID_SDK_ROOT"             sdk install             --canary             platform-tools             platforms/android-37             build-tools/37.0.0             ndk/29.0.14206865             cmake/3.22.1
+          android --sdk="$ANDROID_SDK_ROOT"             sdk install             --canary             platform-tools             platforms/android-37.0             build-tools/37.0.0             ndk/29.0.14206865             cmake/3.22.1
 
           echo "::group::Installed SDK directories"
-          ls -ld             "$ANDROID_SDK_ROOT/platform-tools"             "$ANDROID_SDK_ROOT/platforms/android-37"             "$ANDROID_SDK_ROOT/build-tools/37.0.0"             "$ANDROID_SDK_ROOT/ndk/29.0.14206865"             "$ANDROID_SDK_ROOT/cmake/3.22.1"
+          ls -ld             "$ANDROID_SDK_ROOT/platform-tools"             "$ANDROID_SDK_ROOT/platforms/android-37.0"             "$ANDROID_SDK_ROOT/build-tools/37.0.0"             "$ANDROID_SDK_ROOT/ndk/29.0.14206865"             "$ANDROID_SDK_ROOT/cmake/3.22.1"
           echo "::endgroup::"
 
       - name: Set up Gradle cache
@@ -119,6 +119,10 @@ jobs:
 
           echo "::group::Git"
           git log -1 --oneline --decorate
+          echo "::endgroup::"
+
+          echo "::group::Android SDK"
+          ls -lh "$ANDROID_SDK_ROOT/platforms/android-37.0/android.jar"
           echo "::endgroup::"
 
       - name: Lint app
