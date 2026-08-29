@@ -39,6 +39,15 @@ do
   cp -f "$MODEL_DIR/$name" "$ASSET_DIR/$name"
 done
 
+echo "Preparing bundled Whisper base.en model..."
+./scripts/download_whisper_base_en.sh
+
+WHISPER_MODEL="$HOME/.cache/surveycore/models/ggml-base.en.bin"
+WHISPER_ASSET_DIR="app/src/main/assets/models/whisper"
+mkdir -p "$WHISPER_ASSET_DIR"
+test -s "$WHISPER_MODEL"
+cp -f "$WHISPER_MODEL" "$WHISPER_ASSET_DIR/ggml-base.en.bin"
+
 unset SURVEYCORE_HF_TOKEN
 
 echo "Building internal Release APK..."
@@ -68,6 +77,7 @@ apk = sys.argv[1]
 
 required = [
     "assets/internal/hf_token.properties",
+    "assets/models/whisper/ggml-base.en.bin",
     (
         "assets/models/"
         "sherpa-onnx-nemotron-speech-streaming-en-0.6b-1120ms-int8-2026-04-25/"

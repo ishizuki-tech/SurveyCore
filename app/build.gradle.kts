@@ -10,6 +10,45 @@ val sherpaOnnxAar =
     )
 
 
+fun surveyCoreSigningValue(
+    name: String,
+): String? =
+    providers
+        .gradleProperty(name)
+        .orNull
+        ?: System.getenv(name)
+
+val surveyCoreSigningStoreFile =
+    surveyCoreSigningValue(
+        "SURVEYCORE_SIGNING_STORE_FILE"
+    )
+
+val surveyCoreSigningStorePassword =
+    surveyCoreSigningValue(
+        "SURVEYCORE_SIGNING_STORE_PASSWORD"
+    )
+
+val surveyCoreSigningKeyAlias =
+    surveyCoreSigningValue(
+        "SURVEYCORE_SIGNING_KEY_ALIAS"
+    )
+
+val surveyCoreSigningKeyPassword =
+    surveyCoreSigningValue(
+        "SURVEYCORE_SIGNING_KEY_PASSWORD"
+    )
+
+val surveyCoreInternalSigningReady =
+    listOf(
+        surveyCoreSigningStoreFile,
+        surveyCoreSigningStorePassword,
+        surveyCoreSigningKeyAlias,
+        surveyCoreSigningKeyPassword,
+    ).all {
+        !it.isNullOrBlank()
+    }
+
+
 android {
     namespace = "com.negi.surveycore"
     compileSdk {
@@ -45,12 +84,47 @@ android {
         }
     }
 
+    signingConfigs {
+        if (
+            surveyCoreInternalSigningReady
+        ) {
+            create(
+                "internalRelease"
+            ) {
+                storeFile =
+                    file(
+                        checkNotNull(
+                            surveyCoreSigningStoreFile
+                        )
+                    )
+
+                storePassword =
+                    checkNotNull(
+                        surveyCoreSigningStorePassword
+                    )
+
+                keyAlias =
+                    checkNotNull(
+                        surveyCoreSigningKeyAlias
+                    )
+
+                keyPassword =
+                    checkNotNull(
+                        surveyCoreSigningKeyPassword
+                    )
+            }
+        }
+    }
+
     buildTypes {
         release {
             optimization {
                 enable = false
             }
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig =
+                signingConfigs.findByName(
+                    "internalRelease"
+                )
         }
     }
     compileOptions {
@@ -63,7 +137,7 @@ android {
 
     androidResources {
         // sherpa-onnx loads these directly from AssetManager.
-        noCompress += listOf("onnx", "txt")
+        noCompress += listOf("onnx", "txt", "bin")
     }
 }
 
@@ -71,7 +145,7 @@ dependencies {
     implementation(project(":asr-sherpa"))
     implementation(files(sherpaOnnxAar))
 
-    debugImplementation(
+    implementation(
         project(":asr-whispercpp")
     )
 

@@ -150,3 +150,6 @@ app/src/main/assets/models/sherpa-onnx-nemotron-speech-streaming-en-0.6b-1120ms-
 
 app/src/main/assets/internal/hf_token.properties
 app/src/main/res/values/internal_hf_token_generated.xml
+
+# Build-generated bundled Whisper model asset
+app/src/main/assets/models/whisper/

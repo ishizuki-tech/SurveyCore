@@ -82,6 +82,43 @@ jobs:
       - name: Set up Gradle cache
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Restore internal Android signing key
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.SURVEYCORE_ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.SURVEYCORE_ANDROID_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SURVEYCORE_ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${KEYSTORE_BASE64:-}" ]]; then
+            echo "SURVEYCORE_ANDROID_KEYSTORE_BASE64 is not configured." >&2
+            exit 1
+          fi
+
+          if [[ -z "${STORE_PASSWORD:-}" ]]; then
+            echo "SURVEYCORE_ANDROID_STORE_PASSWORD is not configured." >&2
+            exit 1
+          fi
+
+          if [[ -z "${KEY_ALIAS:-}" ]]; then
+            echo "SURVEYCORE_ANDROID_KEY_ALIAS is not configured." >&2
+            exit 1
+          fi
+
+          SIGNING_DIR="${RUNNER_TEMP}/surveycore-signing"
+          KEYSTORE="${SIGNING_DIR}/surveycore-internal.keystore"
+
+          mkdir -p "$SIGNING_DIR"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
+          chmod 600 "$KEYSTORE"
+
+          test -s "$KEYSTORE"
+
+          keytool             -list             -keystore "$KEYSTORE"             -storepass "$STORE_PASSWORD"             -alias "$KEY_ALIAS"             >/dev/null
+
+          echo "Internal Android signing key restored."
+
       - name: Verify internal build sources
         shell: bash
         run: |
@@ -91,6 +128,7 @@ jobs:
             "./gradlew"
             "./scripts/download_sherpa_onnx_android_aar.sh"
             "./scripts/download_sherpa_nemotron_1120ms.sh"
+            "./scripts/download_whisper_base_en.sh"
             "./scripts/prepare_internal_hf_token.sh"
             "./app/src/main/java/com/negi/surveycore/GemmaModelBootstrapActivity.kt"
             "./app/src/main/java/com/negi/surveycore/internal/InternalHfTokenProvider.kt"
@@ -111,6 +149,7 @@ jobs:
           chmod +x ./gradlew
           chmod +x ./scripts/download_sherpa_onnx_android_aar.sh
           chmod +x ./scripts/download_sherpa_nemotron_1120ms.sh
+          chmod +x ./scripts/download_whisper_base_en.sh
           chmod +x ./scripts/prepare_internal_hf_token.sh
 
       - name: Prepare encrypted Hugging Face token
@@ -196,6 +235,24 @@ jobs:
           du -sh "$ASSET_DIR"
           echo "::endgroup::"
 
+      - name: Bundle Whisper base.en model into APK assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ./scripts/download_whisper_base_en.sh
+
+          MODEL="$HOME/.cache/surveycore/models/ggml-base.en.bin"
+          ASSET_DIR="app/src/main/assets/models/whisper"
+
+          mkdir -p "$ASSET_DIR"
+          test -s "$MODEL"
+          cp -f "$MODEL" "$ASSET_DIR/ggml-base.en.bin"
+
+          echo "::group::Bundled Whisper asset"
+          ls -lh "$ASSET_DIR/ggml-base.en.bin"
+          echo "::endgroup::"
+
       - name: Show build environment
         shell: bash
         run: |
@@ -218,10 +275,36 @@ jobs:
           echo "::endgroup::"
 
       - name: Lint app
+        env:
+          SURVEYCORE_SIGNING_STORE_FILE: ${{ runner.temp }}/surveycore-signing/surveycore-internal.keystore
+          SURVEYCORE_SIGNING_STORE_PASSWORD: ${{ secrets.SURVEYCORE_ANDROID_STORE_PASSWORD }}
+          SURVEYCORE_SIGNING_KEY_ALIAS: ${{ secrets.SURVEYCORE_ANDROID_KEY_ALIAS }}
+          SURVEYCORE_SIGNING_KEY_PASSWORD: ${{ secrets.SURVEYCORE_ANDROID_KEY_PASSWORD }}
         run: ./gradlew :app:lint --stacktrace
 
       - name: Build internal release APK
+        env:
+          SURVEYCORE_SIGNING_STORE_FILE: ${{ runner.temp }}/surveycore-signing/surveycore-internal.keystore
+          SURVEYCORE_SIGNING_STORE_PASSWORD: ${{ secrets.SURVEYCORE_ANDROID_STORE_PASSWORD }}
+          SURVEYCORE_SIGNING_KEY_ALIAS: ${{ secrets.SURVEYCORE_ANDROID_KEY_ALIAS }}
+          SURVEYCORE_SIGNING_KEY_PASSWORD: ${{ secrets.SURVEYCORE_ANDROID_KEY_PASSWORD }}
         run: ./gradlew :app:assembleRelease --stacktrace
+
+      - name: Verify APK signing certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK="$(
+            find app/build/outputs/apk/release               -maxdepth 1               -type f               -name '*.apk'               -print               | head -1
+          )"
+
+          if [[ -z "$APK" ]]; then
+            echo "No release APK found for signature verification." >&2
+            exit 1
+          fi
+
+          "$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner"             verify             --verbose             --print-certs             "$APK"
 
       - name: Verify internal release APK
         shell: bash
@@ -280,6 +363,20 @@ jobs:
                       f"OK {path} "
                       f"{info.file_size / 1024 / 1024:.1f} MiB"
                   )
+
+              whisper_path = "assets/models/whisper/ggml-base.en.bin"
+              whisper_info = archive.getinfo(whisper_path)
+
+              if whisper_info.file_size <= 0:
+                  raise SystemExit("Bundled Whisper model is empty.")
+
+              if whisper_info.compress_type != zipfile.ZIP_STORED:
+                  raise SystemExit("Whisper model must be stored uncompressed.")
+
+              print(
+                  f"OK {whisper_path} "
+                  f"{whisper_info.file_size / 1024 / 1024:.1f} MiB"
+              )
 
               token_path = "assets/internal/hf_token.properties"
               token_info = archive.getinfo(token_path)

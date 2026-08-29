@@ -11,6 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -20,6 +21,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -35,7 +37,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.negi.surveycore.ai.backend.litertlm.LiteRtLmBackend
-import com.negi.surveycore.asr.sherpa.NemotronStreamingAsr
+import com.negi.surveycore.voice.NemotronSelectableVoiceAsr
+import com.negi.surveycore.voice.SelectableVoiceAsr
+import com.negi.surveycore.voice.VoiceAsrEngine
+import com.negi.surveycore.voice.WhisperSelectableVoiceAsr
 import com.negi.surveycore.ai.model.ModelSurveyAi
 import com.negi.surveycore.survey.core.ai.SurveyAi
 import com.negi.surveycore.survey.core.controller.SurveyController
@@ -239,9 +244,18 @@ private fun AgricultureSurveyDemo(
             mutableStateOf(false)
         }
 
+    var selectedAsrEngine by
+        remember {
+            mutableStateOf(
+                VoiceAsrEngine.NEMOTRON_1120
+            )
+        }
+
     var voiceStatus by
         remember {
-            mutableStateOf("ASR: preparing Nemotron 1120ms...")
+            mutableStateOf(
+                "ASR: preparing Nemotron 1120ms..."
+            )
         }
 
     var voiceFinalText by
@@ -257,65 +271,86 @@ private fun AgricultureSurveyDemo(
     val context =
         LocalContext.current
 
+    val voiceListener =
+        remember(
+            selectedAsrEngine
+        ) {
+            object : SelectableVoiceAsr.Listener {
+                override fun onStarted() {
+                    voiceActive = true
+                    voiceStatus = "ASR: listening"
+                }
+
+                override fun onAudioLevel(
+                    rms: Float,
+                ) {
+                    voiceRms = rms
+                }
+
+                override fun onPartial(
+                    text: String,
+                ) {
+                    input =
+                        combineVoiceText(
+                            voiceFinalText,
+                            text,
+                        )
+                }
+
+                override fun onFinal(
+                    text: String,
+                ) {
+                    voiceFinalText =
+                        combineVoiceText(
+                            voiceFinalText,
+                            text,
+                        )
+                    input = voiceFinalText
+                }
+
+                override fun onProcessing() {
+                    voiceStatus = "ASR: transcribing..."
+                }
+
+                override fun onError(
+                    throwable: Throwable,
+                ) {
+                    voiceActive = false
+                    voiceStatus =
+                        "ASR error: ${
+                            throwable.message
+                                ?: throwable::class.java.simpleName
+                        }"
+                }
+
+                override fun onStopped() {
+                    voiceActive = false
+                    voiceRms = 0.0f
+                    voiceStatus =
+                        "ASR: ${selectedAsrEngine.displayName} ready"
+                }
+            }
+        }
+
     val voiceAsr =
-        remember(context) {
-            NemotronStreamingAsr(
-                context =
-                    context.applicationContext,
-                listener =
-                    object : NemotronStreamingAsr.Listener {
-                        override fun onStarted() {
-                            voiceActive = true
-                            voiceStatus = "ASR: listening"
-                        }
+        remember(
+            context,
+            selectedAsrEngine,
+            voiceListener,
+        ) {
+            when (selectedAsrEngine) {
+                VoiceAsrEngine.NEMOTRON_1120 ->
+                    NemotronSelectableVoiceAsr(
+                        context = context.applicationContext,
+                        listener = voiceListener,
+                    )
 
-                        override fun onAudioLevel(
-                            rms: Float,
-                        ) {
-                            voiceRms = rms
-                        }
-
-                        override fun onPartial(
-                            text: String,
-                        ) {
-                            input =
-                                combineVoiceText(
-                                    voiceFinalText,
-                                    text,
-                                )
-                        }
-
-                        override fun onFinal(
-                            text: String,
-                        ) {
-                            voiceFinalText =
-                                combineVoiceText(
-                                    voiceFinalText,
-                                    text,
-                                )
-
-                            input =
-                                voiceFinalText
-                        }
-
-                        override fun onError(
-                            throwable: Throwable,
-                        ) {
-                            voiceActive = false
-                            voiceStatus =
-                                "ASR error: ${
-                                    throwable.message
-                                        ?: throwable::class.java.simpleName
-                                }"
-                        }
-
-                        override fun onStopped() {
-                            voiceActive = false
-                            voiceStatus =
-                                "ASR: Nemotron 1120ms ready"
-                        }
-                    },
-            )
+                VoiceAsrEngine.WHISPER_BASE_EN ->
+                    WhisperSelectableVoiceAsr(
+                        context = context.applicationContext,
+                        listener = voiceListener,
+                    )
+            }
         }
 
     val microphonePermissionLauncher =
@@ -338,6 +373,10 @@ private fun AgricultureSurveyDemo(
     LaunchedEffect(
         voiceAsr
     ) {
+        voicePrepared = false
+        voiceStatus =
+            "ASR: preparing ${selectedAsrEngine.displayName}..."
+
         try {
             withContext(
                 Dispatchers.IO
@@ -347,7 +386,7 @@ private fun AgricultureSurveyDemo(
 
             voicePrepared = true
             voiceStatus =
-                "ASR: Nemotron 1120ms ready"
+                "ASR: ${selectedAsrEngine.displayName} ready"
         } catch (
             exception: Exception
         ) {
@@ -460,12 +499,47 @@ private fun AgricultureSurveyDemo(
 
         Text(
             text =
-                "ASR: Nemotron 1120ms / sherpa-onnx",
+                "ASR engine: ${selectedAsrEngine.displayName}",
             style =
                 MaterialTheme
                     .typography
                     .labelSmall,
         )
+
+        Row(
+            horizontalArrangement =
+                Arrangement.spacedBy(
+                    8.dp
+                ),
+        ) {
+            OutlinedButton(
+                enabled =
+                    !voiceActive &&
+                        !busy &&
+                        selectedAsrEngine !=
+                            VoiceAsrEngine.NEMOTRON_1120,
+                onClick = {
+                    selectedAsrEngine =
+                        VoiceAsrEngine.NEMOTRON_1120
+                },
+            ) {
+                Text("Nemotron")
+            }
+
+            OutlinedButton(
+                enabled =
+                    !voiceActive &&
+                        !busy &&
+                        selectedAsrEngine !=
+                            VoiceAsrEngine.WHISPER_BASE_EN,
+                onClick = {
+                    selectedAsrEngine =
+                        VoiceAsrEngine.WHISPER_BASE_EN
+                },
+            ) {
+                Text("Whisper")
+            }
+        }
 
         Text(
             text =
