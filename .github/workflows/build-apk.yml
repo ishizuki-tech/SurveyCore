@@ -42,56 +42,40 @@ jobs:
           accept-android-sdk-licenses: true
           log-accepted-android-sdk-licenses: false
 
-      - name: Locate Android CLI
-        id: android_cli
+      - name: Install Android CLI
         shell: bash
         run: |
           set -euo pipefail
 
-          ANDROID_CLI="$(command -v android || true)"
+          curl -fsSL             https://dl.google.com/android/cli/latest/linux_x86_64/install_root.sh             | sudo bash
 
-          if [[ -z "$ANDROID_CLI" ]]; then
-            ANDROID_CLI="$(
-              find "$ANDROID_SDK_ROOT/cmdline-tools"                 -type f                 -path '*/bin/android'                 -print                 | sort -V                 | tail -1
-            )"
-          fi
-
-          if [[ -z "$ANDROID_CLI" || ! -x "$ANDROID_CLI" ]]; then
-            echo "Android CLI was not found." >&2
-            find "$ANDROID_SDK_ROOT/cmdline-tools" -maxdepth 4 -type f -name android -print || true
-            exit 1
-          fi
-
-          echo "Android CLI: $ANDROID_CLI"
-          "$ANDROID_CLI" --version
-          echo "path=$ANDROID_CLI" >> "$GITHUB_OUTPUT"
+          echo "::group::Android CLI"
+          command -v android
+          android --version
+          echo "::endgroup::"
 
       - name: Inspect Android 17 SDK packages
         shell: bash
-        env:
-          ANDROID_CLI: ${{ steps.android_cli.outputs.path }}
         run: |
           set -euo pipefail
 
           echo "::group::Android 17 platform"
-          "$ANDROID_CLI" sdk list 'platforms/android-37' --all --all-versions --canary || true
+          android --sdk="$ANDROID_SDK_ROOT"             sdk list 'platforms/android-37'             --all             --all-versions             --canary             || true
           echo "::endgroup::"
 
           echo "::group::Android 37 build tools"
-          "$ANDROID_CLI" sdk list 'build-tools/37.*' --all --all-versions --canary || true
+          android --sdk="$ANDROID_SDK_ROOT"             sdk list 'build-tools/37.*'             --all             --all-versions             --canary             || true
           echo "::endgroup::"
 
       - name: Install Android SDK components
         shell: bash
-        env:
-          ANDROID_CLI: ${{ steps.android_cli.outputs.path }}
         run: |
           set -euo pipefail
 
-          "$ANDROID_CLI" sdk install --canary             platform-tools             platforms/android-37             build-tools/37.0.0             ndk/29.0.14206865             cmake/3.22.1
+          android --sdk="$ANDROID_SDK_ROOT"             sdk install             --canary             platform-tools             platforms/android-37             build-tools/37.0.0             ndk/29.0.14206865             cmake/3.22.1
 
-          echo "::group::Installed Android SDK packages"
-          "$ANDROID_CLI" sdk list             'platform-tools|platforms/android-37|build-tools/37.*|ndk/29.0.14206865|cmake/3.22.1'             --all             --all-versions             --canary             || true
+          echo "::group::Installed SDK directories"
+          ls -ld             "$ANDROID_SDK_ROOT/platform-tools"             "$ANDROID_SDK_ROOT/platforms/android-37"             "$ANDROID_SDK_ROOT/build-tools/37.0.0"             "$ANDROID_SDK_ROOT/ndk/29.0.14206865"             "$ANDROID_SDK_ROOT/cmake/3.22.1"
           echo "::endgroup::"
 
       - name: Set up Gradle cache
@@ -135,10 +119,6 @@ jobs:
 
           echo "::group::Git"
           git log -1 --oneline --decorate
-          echo "::endgroup::"
-
-          echo "::group::Android SDK files"
-          ls -ld             "$ANDROID_SDK_ROOT/platforms/android-37"             "$ANDROID_SDK_ROOT/build-tools/37.0.0"             "$ANDROID_SDK_ROOT/ndk/29.0.14206865"             "$ANDROID_SDK_ROOT/cmake/3.22.1"
           echo "::endgroup::"
 
       - name: Lint app
