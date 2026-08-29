@@ -9,7 +9,6 @@ val sherpaOnnxAar =
             ?: "${System.getProperty("user.home")}/.cache/surveycore/libs/sherpa-onnx-1.13.4.aar"
     )
 
-
 fun surveyCoreSigningValue(
     name: String,
 ): String? =
@@ -49,20 +48,121 @@ val surveyCoreInternalSigningReady =
     }
 
 
+val surveyCoreReleaseTaskRequested =
+    gradle.startParameter.taskNames.any {
+            requestedTask ->
+        val taskName =
+            requestedTask
+                .substringAfterLast(':')
+
+        taskName ==
+            "build" ||
+            taskName ==
+            "assemble" ||
+            taskName ==
+            "bundle" ||
+            taskName.contains(
+                "Release"
+            )
+    }
+
+if (
+    surveyCoreReleaseTaskRequested
+) {
+    val missingSigningValues =
+        buildList {
+            if (
+                surveyCoreSigningStoreFile
+                    .isNullOrBlank()
+            ) {
+                add(
+                    "SURVEYCORE_SIGNING_STORE_FILE"
+                )
+            }
+
+            if (
+                surveyCoreSigningStorePassword
+                    .isNullOrBlank()
+            ) {
+                add(
+                    "SURVEYCORE_SIGNING_STORE_PASSWORD"
+                )
+            }
+
+            if (
+                surveyCoreSigningKeyAlias
+                    .isNullOrBlank()
+            ) {
+                add(
+                    "SURVEYCORE_SIGNING_KEY_ALIAS"
+                )
+            }
+
+            if (
+                surveyCoreSigningKeyPassword
+                    .isNullOrBlank()
+            ) {
+                add(
+                    "SURVEYCORE_SIGNING_KEY_PASSWORD"
+                )
+            }
+        }
+
+    check(
+        missingSigningValues.isEmpty()
+    ) {
+        "Internal Release signing is not configured. Missing: " +
+            missingSigningValues.joinToString()
+    }
+
+    val signingStoreFile =
+        file(
+            checkNotNull(
+                surveyCoreSigningStoreFile
+            )
+        )
+
+    check(
+        signingStoreFile.isFile
+    ) {
+        "Internal Release keystore not found: ${signingStoreFile.absolutePath}"
+    }
+
+    check(
+        signingStoreFile.length() > 0L
+    ) {
+        "Internal Release keystore is empty: ${signingStoreFile.absolutePath}"
+    }
+}
+
 android {
     namespace = "com.negi.surveycore"
+
     compileSdk {
-        version = release(37)
+        version =
+            release(
+                37
+            )
     }
 
     defaultConfig {
-        applicationId = "com.negi.surveycore"
-        minSdk = 28
-        targetSdk = 37
-        versionCode = 1
-        versionName = "1.0"
+        applicationId =
+            "com.negi.surveycore"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        minSdk =
+            28
+
+        targetSdk =
+            37
+
+        versionCode =
+            1
+
+        versionName =
+            "1.0"
+
+        testInstrumentationRunner =
+            "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
             abiFilters +=
@@ -119,57 +219,132 @@ android {
     buildTypes {
         release {
             optimization {
-                enable = false
+                enable =
+                    false
             }
+
             signingConfig =
                 signingConfigs.findByName(
                     "internalRelease"
                 )
         }
     }
+
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility =
+            JavaVersion.VERSION_11
+
+        targetCompatibility =
+            JavaVersion.VERSION_11
     }
+
     buildFeatures {
-        compose = true
+        compose =
+            true
     }
 
     androidResources {
-        // sherpa-onnx loads these directly from AssetManager.
-        noCompress += listOf("onnx", "txt", "bin")
+        // sherpa-onnx and whisper.cpp load model assets directly.
+        noCompress +=
+            listOf(
+                "onnx",
+                "txt",
+                "bin",
+            )
     }
 }
-
 dependencies {
-    implementation(project(":asr-sherpa"))
-    implementation(files(sherpaOnnxAar))
+    implementation(
+        project(
+            ":asr-sherpa"
+        )
+    )
 
     implementation(
-        project(":asr-whispercpp")
+        files(
+            sherpaOnnxAar
+        )
+    )
+
+    implementation(
+        project(
+            ":asr-whispercpp"
+        )
     )
 
     implementation(
         "com.google.ai.edge.litertlm:litertlm-android:0.16.1"
     )
+
     implementation(
         "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0"
     )
 
-    implementation("org.yaml:snakeyaml:2.6")
-    implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.compose.material3)
-    implementation(libs.androidx.compose.ui)
-    implementation(libs.androidx.compose.ui.graphics)
-    implementation(libs.androidx.compose.ui.tooling.preview)
-    implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.lifecycle.runtime.ktx)
-    testImplementation(libs.junit)
-    androidTestImplementation(platform(libs.androidx.compose.bom))
-    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
-    androidTestImplementation(libs.androidx.espresso.core)
-    androidTestImplementation(libs.androidx.junit)
-    debugImplementation(libs.androidx.compose.ui.test.manifest)
-    debugImplementation(libs.androidx.compose.ui.tooling)
+    implementation(
+        "org.yaml:snakeyaml:2.6"
+    )
+
+    implementation(
+        platform(
+            libs.androidx.compose.bom
+        )
+    )
+
+    implementation(
+        libs.androidx.activity.compose
+    )
+
+    implementation(
+        libs.androidx.compose.material3
+    )
+
+    implementation(
+        libs.androidx.compose.ui
+    )
+
+    implementation(
+        libs.androidx.compose.ui.graphics
+    )
+
+    implementation(
+        libs.androidx.compose.ui.tooling.preview
+    )
+
+    implementation(
+        libs.androidx.core.ktx
+    )
+
+    implementation(
+        libs.androidx.lifecycle.runtime.ktx
+    )
+
+    testImplementation(
+        libs.junit
+    )
+
+    androidTestImplementation(
+        platform(
+            libs.androidx.compose.bom
+        )
+    )
+
+    androidTestImplementation(
+        libs.androidx.compose.ui.test.junit4
+    )
+
+    androidTestImplementation(
+        libs.androidx.espresso.core
+    )
+
+    androidTestImplementation(
+        libs.androidx.junit
+    )
+
+    debugImplementation(
+        libs.androidx.compose.ui.test.manifest
+    )
+
+    debugImplementation(
+        libs.androidx.compose.ui.tooling
+    )
 }
