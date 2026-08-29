@@ -15,7 +15,6 @@ import com.k2fsa.sherpa.onnx.OnlineModelConfig
 import com.k2fsa.sherpa.onnx.OnlineRecognizer
 import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
-import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 import kotlin.math.sqrt
@@ -31,7 +30,6 @@ import kotlin.math.sqrt
  */
 class NemotronStreamingAsr(
     private val context: Context,
-    private val modelDir: File,
     private val listener: Listener,
 ) : AutoCloseable {
 
@@ -270,20 +268,20 @@ class NemotronStreamingAsr(
         }
 
     private fun createRecognizer(): OnlineRecognizer {
-        val encoder = File(modelDir, ENCODER_FILE)
-        val decoder = File(modelDir, DECODER_FILE)
-        val joiner = File(modelDir, JOINER_FILE)
-        val tokens = File(modelDir, TOKENS_FILE)
+        val encoder = "$MODEL_ASSET_DIR/$ENCODER_FILE"
+        val decoder = "$MODEL_ASSET_DIR/$DECODER_FILE"
+        val joiner = "$MODEL_ASSET_DIR/$JOINER_FILE"
+        val tokens = "$MODEL_ASSET_DIR/$TOKENS_FILE"
 
         val modelConfig =
             OnlineModelConfig(
                 transducer =
                     OnlineTransducerModelConfig(
-                        encoder = encoder.absolutePath,
-                        decoder = decoder.absolutePath,
-                        joiner = joiner.absolutePath,
+                        encoder = encoder,
+                        decoder = decoder,
+                        joiner = joiner,
                     ),
-                tokens = tokens.absolutePath,
+                tokens = tokens,
                 numThreads = THREAD_COUNT,
                 debug = false,
                 provider = "cpu",
@@ -327,7 +325,7 @@ class NemotronStreamingAsr(
             )
 
         return OnlineRecognizer(
-            assetManager = null,
+            assetManager = context.assets,
             config = config,
         )
     }
@@ -387,24 +385,30 @@ class NemotronStreamingAsr(
             )
 
         val missing =
-            requiredFiles
-                .map { File(modelDir, it) }
-                .filterNot { file ->
-                    file.isFile && file.length() > 0L
+            requiredFiles.filterNot { name ->
+                val assetPath =
+                    "$MODEL_ASSET_DIR/$name"
+
+                try {
+                    context.assets
+                        .openFd(assetPath)
+                        .use { descriptor ->
+                            descriptor.length > 0L
+                        }
+                } catch (_: Exception) {
+                    false
                 }
+            }
 
         check(missing.isEmpty()) {
             buildString {
                 append(
-                    "Nemotron 1120ms model is incomplete: "
+                    "Bundled Nemotron 1120ms model is incomplete."
                 )
-                append(modelDir.absolutePath)
-                append("\nMissing:\n")
-                append(
-                    missing.joinToString("\n") { file ->
-                        file.name
-                    }
-                )
+                append("\nAsset directory: ")
+                append(MODEL_ASSET_DIR)
+                append("\nMissing or compressed assets:\n")
+                append(missing.joinToString("\n"))
             }
         }
     }
@@ -469,7 +473,7 @@ class NemotronStreamingAsr(
     }
 
     companion object {
-        const val MODEL_RELATIVE_PATH =
+        const val MODEL_ASSET_DIR =
             "models/sherpa-onnx-nemotron-speech-streaming-en-0.6b-1120ms-int8-2026-04-25"
 
         const val MODEL_DISPLAY_NAME =

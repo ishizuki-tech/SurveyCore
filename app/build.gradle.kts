@@ -60,6 +60,11 @@ android {
     buildFeatures {
         compose = true
     }
+
+    androidResources {
+        // sherpa-onnx loads these directly from AssetManager.
+        noCompress += listOf("onnx", "txt")
+    }
 }
 
 dependencies {

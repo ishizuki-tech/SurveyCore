@@ -262,11 +262,6 @@ private fun AgricultureSurveyDemo(
             NemotronStreamingAsr(
                 context =
                     context.applicationContext,
-                modelDir =
-                    File(
-                        context.filesDir,
-                        NemotronStreamingAsr.MODEL_RELATIVE_PATH,
-                    ),
                 listener =
                     object : NemotronStreamingAsr.Listener {
                         override fun onStarted() {
