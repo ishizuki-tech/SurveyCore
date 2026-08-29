@@ -570,12 +570,12 @@ jobs:
           cp "$APK" "$OUTPUT"
 
           APK_SHA256="$(
-            shasum -a 256 "$OUTPUT" | awk '{{print $1}}'
+            shasum -a 256 "$OUTPUT" | awk '{print $1}'
           )"
 
-          RELEASE_TAG="build-${{GITHUB_RUN_NUMBER}}-${{SHORT_SHA}}"
-          RELEASE_URL="https://github.com/${{GITHUB_REPOSITORY}}/releases/tag/${{RELEASE_TAG}}"
-          DOWNLOAD_URL="https://github.com/${{GITHUB_REPOSITORY}}/releases/download/${{RELEASE_TAG}}/${{OUTPUT}}"
+          RELEASE_TAG="build-${GITHUB_RUN_NUMBER}-${SHORT_SHA}"
+          RELEASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}"
+          DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${OUTPUT}"
 
           echo "path=$OUTPUT" >> "$GITHUB_OUTPUT"
           echo "name=$OUTPUT" >> "$GITHUB_OUTPUT"
@@ -615,35 +615,35 @@ jobs:
 
           NOTES="$RUNNER_TEMP/surveycore-release-notes.md"
 
-          cat > "$NOTES" <<EOF
-          # SurveyCore ${RELEASE_TAG}
-
-          Verified Android build from commit `${GITHUB_SHA}`.
-
-          ## APK
-
-          - File: `${APK_NAME}`
-          - APK SHA-256: `${APK_SHA256}`
-          - Signing certificate SHA-256: `${SURVEYCORE_ANDROID_CERT_SHA256}`
-
-          ## Included
-
-          - Nemotron 1120ms streaming ASR
-          - Whisper base.en
-          - Gemma 3n E2B first-run provisioning
-
-          ## Install
-
-          Download the APK on Android and open it.
-
-          For adb:
-
-          ```bash
-          adb install -r "${APK_NAME}"
-          ```
-
-          Source commit: ${GITHUB_SHA}
-          EOF
+          {
+            echo "# SurveyCore ${RELEASE_TAG}"
+            echo
+            echo "Verified Android build from commit ${GITHUB_SHA}."
+            echo
+            echo "## APK"
+            echo
+            echo "- File: ${APK_NAME}"
+            echo "- APK SHA-256: ${APK_SHA256}"
+            echo "- Signing certificate SHA-256: ${SURVEYCORE_ANDROID_CERT_SHA256}"
+            echo
+            echo "## Included"
+            echo
+            echo "- Nemotron 1120ms streaming ASR"
+            echo "- Whisper base.en"
+            echo "- Gemma 3n E2B first-run provisioning"
+            echo
+            echo "## Install"
+            echo
+            echo "Download the APK on Android and open it."
+            echo
+            echo "For adb:"
+            echo
+            echo '```bash'
+            echo "adb install -r "${APK_NAME}""
+            echo '```'
+            echo
+            echo "Source commit: ${GITHUB_SHA}"
+          } > "$NOTES"
 
           if gh release view "$RELEASE_TAG"             --repo "$GITHUB_REPOSITORY"             >/dev/null 2>&1
           then
