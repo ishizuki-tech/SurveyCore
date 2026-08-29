@@ -13,6 +13,10 @@ concurrency:
   group: android-apk-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+  ANDROID_HOME: /usr/local/lib/android/sdk
+
 jobs:
   build-release-apk:
     name: Build release APK
@@ -21,31 +25,55 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
           submodules: recursive
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # API 37 is newer than the command-line tools bundled by the
+          # default setup-android@v3 configuration.
+          cmdline-tools-version: 15859902
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: false
 
       - name: Install Android SDK components
         shell: bash
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager \
+
+          echo "::group::sdkmanager version"
+          sdkmanager --version
+          echo "::endgroup::"
+
+          echo "::group::API 37 packages visible to sdkmanager"
+          sdkmanager --channel=3 --list \
+            | grep -E 'platforms;android-37|build-tools;37' \
+            || true
+          echo "::endgroup::"
+
+          # Android 17 / API 37 can be on a preview channel.
+          # Build Tools 36.0.0 is sufficient for AGP builds targeting API 37.
+          sdkmanager --channel=3 \
             "platform-tools" \
             "platforms;android-37" \
-            "build-tools;37.0.0" \
+            "build-tools;36.0.0" \
             "ndk;29.0.14206865" \
             "cmake;3.22.1"
+
+          echo "::group::Installed Android SDK packages"
+          sdkmanager --list_installed \
+            | grep -E 'platform-tools|platforms;android-37|build-tools;36.0.0|ndk;29.0.14206865|cmake;3.22.1' \
+            || true
+          echo "::endgroup::"
 
       - name: Set up Gradle cache
         uses: gradle/actions/setup-gradle@v4
@@ -53,6 +81,7 @@ jobs:
       - name: Make scripts executable
         shell: bash
         run: |
+          set -euo pipefail
           chmod +x ./gradlew
           chmod +x ./scripts/download_sherpa_onnx_android_aar.sh
 
@@ -61,7 +90,28 @@ jobs:
         run: |
           set -euo pipefail
           ./scripts/download_sherpa_onnx_android_aar.sh
-          ls -lh "$HOME/.cache/surveycore/libs/"
+
+          AAR="$HOME/.cache/surveycore/libs/sherpa-onnx-1.13.4.aar"
+
+          if [[ ! -s "$AAR" ]]; then
+            echo "sherpa-onnx AAR was not created: $AAR" >&2
+            exit 1
+          fi
+
+          ls -lh "$AAR"
+
+      - name: Show build environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Java:"
+          java -version
+          echo
+          echo "Gradle:"
+          ./gradlew --version
+          echo
+          echo "Git:"
+          git log -1 --oneline --decorate
 
       - name: Lint app
         run: ./gradlew :app:lint --stacktrace
@@ -75,10 +125,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          APK="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -1)"
+          APK="$(find app/build/outputs/apk/release \
+            -maxdepth 1 \
+            -type f \
+            -name '*.apk' \
+            -print \
+            | head -1)"
 
           if [[ -z "$APK" ]]; then
             echo "No release APK found." >&2
+            find app/build/outputs -maxdepth 5 -type f -print || true
             exit 1
           fi
 
